@@ -164,9 +164,10 @@ function renderStatus(s) {
   }
 
   const timeLeft = s.timeLeft;
-  if (s.queueId === 2400 && s.phase === 'BAN_PICK') {
+  const hextechQueueId = Number(s.hextechQueueId) || 2400;
+  if (s.queueId === hextechQueueId && s.phase === 'BAN_PICK') {
     $('timerLabel').textContent = '距可换人约';
-  } else if (s.queueId === 2400 && s.phase === 'FINALIZATION') {
+  } else if (s.queueId === hextechQueueId && s.phase === 'FINALIZATION') {
     $('timerLabel').textContent = '可换人剩余';
   } else if (s.phase === 'FINALIZATION') {
     $('timerLabel').textContent = '即将开始';
@@ -346,7 +347,7 @@ function renderStatus(s) {
     const canFind =
       s.connected &&
       s.inLobby &&
-      s.lobby?.queueId === 2400 &&
+      s.lobby?.queueId === hextechQueueId &&
       s.lobby?.isLeader !== false &&
       ![
         'Matchmaking',
@@ -363,7 +364,7 @@ function renderStatus(s) {
     if (!s.connected) {
       hint = '客户端未连接';
     } else if (s.inLobby) {
-      if (s.lobby?.queueId !== 2400) {
+      if (s.lobby?.queueId !== hextechQueueId) {
         hint = '当前房间不是海克斯大乱斗';
       } else if (s.lobby?.isLeader === false) {
         hint = '只有房主能开始匹配';

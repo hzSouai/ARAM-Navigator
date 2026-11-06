@@ -156,6 +156,7 @@ const runtime = {
   warnedAboutWiner: false,
   gameflowPhase: null,
   lastGameflowAt: 0,
+  hextechQueueId: 2400,
   inLobby: false,
   lobby: null,
   presence: null,
@@ -476,6 +477,56 @@ function saveChampionCache(catalog) {
   }
 }
 
+// Riot may rotate the live Hextech ARAM queue ID between patches/events.
+// Resolve it from the client's queue list and fall back to 2400 when offline.
+async function resolveHextechQueueId(client, runtime2) {
+  try {
+    const res = await request(client, 'GET', '/lol-game-queues/v1/queues');
+    if (res.status !== 200 || !res.body.trim()) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const queues = JSON.parse(res.body);
+    if (!Array.isArray(queues)) throw new Error('返回格式不正确');
+
+    const candidates = queues.filter((queue) => {
+      const mode = String(queue.gameMode || '').toUpperCase();
+      const text = `${queue.name || ''} ${queue.shortName || ''} ${
+        queue.description || ''
+      }`.toLowerCase();
+      return (
+        mode === 'KIWI' ||
+        text.includes('mayhem') ||
+        text.includes('海克斯')
+      );
+    });
+    const available = candidates.filter(
+      (queue) => String(queue.queueAvailability || '').toLowerCase() !== 'unavailable',
+    );
+    const preferred = available.find(
+      (queue) => Number(queue.id ?? queue.queueId) === 2400,
+    );
+    const chosen = preferred || available[0] || candidates[0];
+    const id = Number(chosen?.id ?? chosen?.queueId);
+    if (!Number.isInteger(id) || id <= 0) {
+      throw new Error('未找到海克斯大乱斗队列');
+    }
+
+    runtime2.hextechQueueId = id;
+    log(
+      `海克斯大乱斗队列: ${id}${
+        chosen?.name ? ` (${chosen.name})` : ''
+      }`,
+    );
+    return id;
+  } catch (error) {
+    runtime2.hextechQueueId = 2400;
+    log(
+      `[WARN] 自动识别海克斯大乱斗队列失败，使用 2400: ${error.message}`,
+    );
+    return 2400;
+  }
+}
+
 async function refreshChampionCatalog(client, runtime2) {
   const catalog = await getChampionCatalog(client);
   if (!Array.isArray(catalog) || catalog.length === 0) {
@@ -515,6 +566,7 @@ function buildStatus() {
       : [],
     wishlist: (config.wishlist || []).map(champRef),
     queueId: session?.queueId ?? null,
+    hextechQueueId: runtime.hextechQueueId || 2400,
     gameId: session?.gameId ?? null,
     timeLeft: info?.timeLeft ?? null,
     isInfinite: info?.isInfinite ?? false,
@@ -790,10 +842,11 @@ async function joinFriendLobby(partyId) {
   }
 }
 
-const HEXTECH_QUEUE_ID = 2400;
+const DEFAULT_HEXTECH_QUEUE_ID = 2400;
 
 async function createHextechLobby() {
   if (!runtime.client) return { ok: false, message: '还没有连接客户端' };
+  const queueId = runtime.hextechQueueId || DEFAULT_HEXTECH_QUEUE_ID;
   const busyPhases = [
     'Matchmaking',
     'ReadyCheck',
@@ -814,7 +867,7 @@ async function createHextechLobby() {
 
   try {
     const res = await request(runtime.client, 'POST', '/lol-lobby/v2/lobby', {
-      queueId: HEXTECH_QUEUE_ID,
+      queueId,
     });
     if (res.status >= 200 && res.status < 300) {
       let lobby = null;
@@ -826,7 +879,7 @@ async function createHextechLobby() {
       runtime.inLobby = true;
       runtime.lobby = {
         partyId: String(lobby?.partyId || ''),
-        queueId: Number(lobby?.gameConfig?.queueId) || HEXTECH_QUEUE_ID,
+        queueId: Number(lobby?.gameConfig?.queueId) || queueId,
         size: Array.isArray(lobby?.members) ? lobby.members.length : 1,
         isLeader: true,
       };
@@ -859,10 +912,11 @@ async function createHextechLobby() {
 
 async function findMatch() {
   if (!runtime.client) return { ok: false, message: '还没有连接客户端' };
+  const queueId = runtime.hextechQueueId || DEFAULT_HEXTECH_QUEUE_ID;
   if (!runtime.inLobby) {
     return { ok: false, message: '先创建或加入一个海克斯大乱斗房间喵' };
   }
-  if (runtime.lobby?.queueId !== HEXTECH_QUEUE_ID) {
+  if (runtime.lobby?.queueId !== queueId) {
     return { ok: false, message: '当前房间不是海克斯大乱斗喵' };
   }
   if (runtime.lobby?.isLeader === false) {
@@ -1242,7 +1296,8 @@ async function manualSwap(championId) {
   if (!runtime.client) return { ok: false, message: '还没有连接客户端' };
   if (!runtime.lastSession) return { ok: false, message: '当前不在选人阶段' };
   const info = sessionInfo(runtime.lastSession);
-  if (runtime.lastSession.queueId === 2400 && info.phase !== 'FINALIZATION') {
+  const hextechQueueId = runtime.hextechQueueId || DEFAULT_HEXTECH_QUEUE_ID;
+  if (runtime.lastSession.queueId === hextechQueueId && info.phase !== 'FINALIZATION') {
     return { ok: false, message: '海克斯大乱斗要等所有人选完才能换备选席喵' };
   }
   if (!info.bench.includes(id)) return { ok: false, message: '这个英雄不在备选席' };
@@ -1411,6 +1466,7 @@ async function handleHextechBurst(client, session, info, runtime2, state) {
 
 async function handleSession(client, session, runtime2, state) {
   const config = runtime2.config;
+  const hextechQueueId = runtime2.hextechQueueId || DEFAULT_HEXTECH_QUEUE_ID;
   const info = sessionInfo(session);
   timelineLog(session, info);
 
@@ -1474,7 +1530,7 @@ async function handleSession(client, session, runtime2, state) {
     );
   }
 
-  if (session.queueId === 2400 && config.benchBurstMode) {
+  if (session.queueId === hextechQueueId && config.benchBurstMode) {
     await handleHextechBurst(client, session, info, runtime2, state);
     return;
   }
@@ -1483,10 +1539,10 @@ async function handleSession(client, session, runtime2, state) {
   if (runtime2.paused) return;
   if (!isPhaseAllowed(info.phase, config.allowedPhases)) return;
 
-  // Hextech ARAM (2400) keeps the bench locked until everyone has finished
+  // The Hextech ARAM queue keeps the bench locked until everyone has finished
   // picking. Attempts during BAN_PICK return 204 but do nothing, so wait for
   // FINALIZATION instead of burning the retry budget early.
-  if (session.queueId === 2400 && info.phase !== 'FINALIZATION') {
+  if (session.queueId === hextechQueueId && info.phase !== 'FINALIZATION') {
     const seconds = info.isInfinite
       ? null
       : Math.max(0, Math.ceil(info.timeLeft / 1000));
@@ -1613,6 +1669,7 @@ async function supervisor(runtime2) {
       const client = await discoverClient(runtime2.config, log);
       runtime2.client = client;
       await refreshChampionCatalog(client, runtime2);
+      await resolveHextechQueueId(client, runtime2);
       if (!runtime2.warnedAboutWiner && isWinerRunning() && winerBenchAutoEnabled()) {
         runtime2.warnedAboutWiner = true;
         log(
@@ -1692,6 +1749,7 @@ async function main() {
     const client = await discoverClient(config, log);
     runtime.client = client;
     await refreshChampionCatalog(client, runtime);
+    await resolveHextechQueueId(client, runtime);
     if (hasFlag('--list-champions')) {
       for (const entry of runtime.catalog) {
         console.log(`${String(entry.id).padStart(4)}  ${entry.name}`);
