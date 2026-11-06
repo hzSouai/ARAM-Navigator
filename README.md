@@ -54,6 +54,8 @@ Node.js 20+。
 - 否则请求管理员权限，隐藏启动 `node src\index.js --web`，最多等待 10 秒后打开页面；
 - 仅在需要启动 Node 服务时请求 UAC；服务已在运行时不会弹出权限提示；
 - 管理员权限用于读取以管理员身份运行的国服客户端命令行；
+- 如果程序目录下存在 `runtime\node.exe`，启动器会优先使用该内置运行时；发布便携版时
+  可将 Node 运行时一并打包；
 - 源码位于 `src/launcher/Launcher.cs` 和 `src/launcher/app.manifest`；
 - 需要重新编译时，运行 `build-launcher.bat`（使用 Windows 自带的 .NET Framework 编译器）；
 - `launch-web.vbs` 保留作为备用启动方式。

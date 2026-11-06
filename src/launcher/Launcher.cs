@@ -65,7 +65,7 @@ internal static class Program
                 return;
             }
 
-            string node = FindNode();
+            string node = FindNode(baseDir);
             if (node == null)
             {
                 MessageBox.Show(
@@ -169,8 +169,14 @@ internal static class Program
         }
     }
 
-    private static string FindNode()
+    private static string FindNode(string baseDir)
     {
+        string bundled = Path.Combine(baseDir, "runtime", "node.exe");
+        if (File.Exists(bundled))
+        {
+            return bundled;
+        }
+
         string[] candidates =
         {
             Path.Combine(
