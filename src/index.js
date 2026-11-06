@@ -21,7 +21,40 @@ const { startWebServer } = require('./web');
 const ROOT = path.resolve(__dirname, '..');
 const CONFIG_PATH = path.join(ROOT, 'config.json');
 const LOG_DIR = path.join(ROOT, 'logs');
+const DATA_DIR = path.join(ROOT, 'data');
+const CHAMPION_CACHE_PATH = path.join(DATA_DIR, 'champions.json');
 fs.mkdirSync(LOG_DIR, { recursive: true });
+fs.mkdirSync(DATA_DIR, { recursive: true });
+
+// The client must be running to fetch champion names. These defaults keep the
+// wishlist readable when the client is closed or the helper just started.
+const FALLBACK_CHAMPIONS = [
+  [145, '虚空之女', 'Kaisa'],
+  [136, '铸星龙王', 'AurelionSol'],
+  [22, '寒冰射手', 'Ashe'],
+  [17, '迅捷斥候', 'Teemo'],
+  [4, '卡牌大师', 'TwistedFate'],
+  [110, '惩戒之箭', 'Varus'],
+  [21, '赏金猎人', 'MissFortune'],
+  [202, '戏命师', 'Jhin'],
+  [90, '虚空先知', 'Malzahar'],
+  [41, '海洋之灾', 'Gangplank'],
+  [245, '时间刺客', 'Ekko'],
+  [235, '涤魂圣枪', 'Senna'],
+  [81, '探险家', 'Ezreal'],
+];
+const FALLBACK_CHAMPION_NAMES = Object.fromEntries(
+  FALLBACK_CHAMPIONS.map(([id, name]) => [id, name]),
+);
+
+function fallbackChampionCatalog() {
+  return FALLBACK_CHAMPIONS.map(([id, name, alias]) => ({
+    id,
+    name,
+    alias,
+    icon: `/lol-game-data/assets/v1/champion-icons/${id}.png`,
+  }));
+}
 
 const now = new Date();
 const TODAY = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
@@ -49,6 +82,7 @@ const DEFAULTS = {
   autoPlayAgain: true,
   autoAccept: true,
   autoSelectCandidate: true,
+  autoPickClientCard: true,
   benchBurstMode: true,
   acceptDelayMs: 1500,
   playAgainDelayMs: 3000,
@@ -110,6 +144,13 @@ const runtime = {
   listeners: new Set(),
   paused: false,
   lastAction: null,
+  clientCards: [],
+  clientCardsAt: 0,
+  pluginCommands: [],
+  pluginLastSeenAt: 0,
+  pluginVersion: '',
+  lastPluginResult: null,
+  lastAutoCardMarker: '',
   startedAt: Date.now(),
   server: null,
   warnedAboutWiner: false,
@@ -339,6 +380,7 @@ function normalizeConfig(parsed) {
   config.autoPlayAgain = Boolean(config.autoPlayAgain);
   config.autoAccept = Boolean(config.autoAccept);
   config.autoSelectCandidate = Boolean(config.autoSelectCandidate);
+  config.autoPickClientCard = Boolean(config.autoPickClientCard);
   config.benchBurstMode = Boolean(config.benchBurstMode);
   config.acceptDelayMs = clampNumber(
     config.acceptDelayMs,
@@ -382,7 +424,68 @@ function saveConfig(config) {
 
 function nameOf(id) {
   const number = Number(id);
-  return runtime.names.get(number) || String(number || '--');
+  return (
+    runtime.names.get(number) ||
+    FALLBACK_CHAMPION_NAMES[number] ||
+    String(number || '--')
+  );
+}
+
+function loadChampionCache() {
+  try {
+    if (fs.existsSync(CHAMPION_CACHE_PATH)) {
+      const parsed = JSON.parse(fs.readFileSync(CHAMPION_CACHE_PATH, 'utf8'));
+      if (Array.isArray(parsed) && parsed.length) {
+        const catalog = parsed
+          .map((entry) => ({
+            id: Number(entry.id),
+            name: String(entry.name || '').trim(),
+            alias: String(entry.alias || '').trim(),
+            icon: String(entry.icon || '').trim(),
+          }))
+          .filter(
+            (entry) =>
+              Number.isInteger(entry.id) && entry.id > 0 && entry.name,
+          );
+        if (catalog.length) {
+          runtime.catalog = catalog;
+          runtime.names = new Map(
+            catalog.map((entry) => [entry.id, entry.name]),
+          );
+          log(`已加载本地英雄名缓存: ${catalog.length} 个`);
+          return;
+        }
+      }
+    }
+  } catch (error) {
+    log(`[WARN] 读取英雄名缓存失败: ${error.message}`);
+  }
+
+  runtime.catalog = fallbackChampionCatalog();
+  runtime.names = new Map(
+    runtime.catalog.map((entry) => [entry.id, entry.name]),
+  );
+  log(`客户端未连接，使用内置英雄名: ${runtime.catalog.length} 个`);
+}
+
+function saveChampionCache(catalog) {
+  try {
+    fs.writeFileSync(CHAMPION_CACHE_PATH, JSON.stringify(catalog, null, 2), 'utf8');
+  } catch (error) {
+    log(`[WARN] 保存英雄名缓存失败: ${error.message}`);
+  }
+}
+
+async function refreshChampionCatalog(client, runtime2) {
+  const catalog = await getChampionCatalog(client);
+  if (!Array.isArray(catalog) || catalog.length === 0) {
+    log('[WARN] 客户端英雄名列表为空，保留本地缓存');
+    return;
+  }
+  runtime2.catalog = catalog;
+  runtime2.names = new Map(catalog.map((entry) => [entry.id, entry.name]));
+  saveChampionCache(catalog);
+  log(`客户端英雄名映射: ${catalog.length} 个`);
 }
 
 function champRef(id) {
@@ -416,6 +519,12 @@ function buildStatus() {
     timeLeft: info?.timeLeft ?? null,
     isInfinite: info?.isInfinite ?? false,
     lastAction: runtime.lastAction,
+    clientCards: runtime.clientCards || [],
+    clientCardsAt: runtime.clientCardsAt || 0,
+    pluginOnline: Boolean(
+      runtime.pluginLastSeenAt && Date.now() - runtime.pluginLastSeenAt < 4000,
+    ),
+    pluginVersion: runtime.pluginVersion || '',
     presence: runtime.presence,
     inLobby: Boolean(runtime.inLobby),
     lobby: runtime.lobby,
@@ -427,6 +536,7 @@ function buildStatus() {
     autoPlayAgain: Boolean(config.autoPlayAgain),
     autoAccept: Boolean(config.autoAccept),
     autoSelectCandidate: Boolean(config.autoSelectCandidate),
+    autoPickClientCard: Boolean(config.autoPickClientCard),
     benchBurstMode: Boolean(config.benchBurstMode),
     config: {
       startupDelayMs: config.startupDelayMs,
@@ -439,6 +549,7 @@ function buildStatus() {
       autoPlayAgain: config.autoPlayAgain,
       autoAccept: config.autoAccept,
       autoSelectCandidate: config.autoSelectCandidate,
+      autoPickClientCard: config.autoPickClientCard,
       benchBurstMode: config.benchBurstMode,
       acceptDelayMs: config.acceptDelayMs,
       playAgainDelayMs: config.playAgainDelayMs,
@@ -679,6 +790,128 @@ async function joinFriendLobby(partyId) {
   }
 }
 
+const HEXTECH_QUEUE_ID = 2400;
+
+async function createHextechLobby() {
+  if (!runtime.client) return { ok: false, message: '还没有连接客户端' };
+  const busyPhases = [
+    'Matchmaking',
+    'ReadyCheck',
+    'ChampSelect',
+    'GameStart',
+    'InProgress',
+    'Reconnect',
+    'WaitingForStats',
+    'PreEndOfGame',
+    'EndOfGame',
+  ];
+  if (busyPhases.includes(runtime.gameflowPhase)) {
+    return { ok: false, message: '当前在游戏/选人中，不能创建房间喵' };
+  }
+  if (runtime.inLobby) {
+    return { ok: false, message: '已经在房间里了，先离开当前房间喵' };
+  }
+
+  try {
+    const res = await request(runtime.client, 'POST', '/lol-lobby/v2/lobby', {
+      queueId: HEXTECH_QUEUE_ID,
+    });
+    if (res.status >= 200 && res.status < 300) {
+      let lobby = null;
+      try {
+        lobby = res.body.trim() ? JSON.parse(res.body) : null;
+      } catch {
+        lobby = null;
+      }
+      runtime.inLobby = true;
+      runtime.lobby = {
+        partyId: String(lobby?.partyId || ''),
+        queueId: Number(lobby?.gameConfig?.queueId) || HEXTECH_QUEUE_ID,
+        size: Array.isArray(lobby?.members) ? lobby.members.length : 1,
+        isLeader: true,
+      };
+      runtime.gameflowPhase = 'Lobby';
+      log('[OK] 已创建海克斯大乱斗房间');
+      publishStatus(true);
+      return { ok: true, message: '已创建海克斯大乱斗房间喵' };
+    }
+    let detail = '';
+    try {
+      const body = JSON.parse(res.body);
+      detail = body.message || body.errorCode || '';
+    } catch {
+      detail = res.body.slice(0, 200);
+    }
+    log(
+      `[WARN] 创建海克斯大乱斗房间失败: HTTP ${res.status}${
+        detail ? ` ${detail}` : ''
+      }`,
+    );
+    return {
+      ok: false,
+      message: `创建失败: HTTP ${res.status}${detail ? ` ${detail}` : ''}`,
+    };
+  } catch (error) {
+    log(`[WARN] 创建海克斯大乱斗房间失败: ${error.message}`);
+    return { ok: false, message: error.message };
+  }
+}
+
+async function findMatch() {
+  if (!runtime.client) return { ok: false, message: '还没有连接客户端' };
+  if (!runtime.inLobby) {
+    return { ok: false, message: '先创建或加入一个海克斯大乱斗房间喵' };
+  }
+  if (runtime.lobby?.queueId !== HEXTECH_QUEUE_ID) {
+    return { ok: false, message: '当前房间不是海克斯大乱斗喵' };
+  }
+  if (runtime.lobby?.isLeader === false) {
+    return { ok: false, message: '只有房主能开始匹配喵' };
+  }
+  if (runtime.gameflowPhase === 'Matchmaking') {
+    return { ok: false, message: '已经在寻找对局了喵' };
+  }
+  if (
+    ['ReadyCheck', 'ChampSelect', 'GameStart', 'InProgress', 'Reconnect'].includes(
+      runtime.gameflowPhase,
+    )
+  ) {
+    return { ok: false, message: '当前阶段不能开始匹配喵' };
+  }
+
+  try {
+    const res = await request(
+      runtime.client,
+      'POST',
+      '/lol-lobby/v2/lobby/matchmaking/search',
+      {},
+    );
+    if (res.status >= 200 && res.status < 300) {
+      runtime.gameflowPhase = 'Matchmaking';
+      log('[OK] 开始寻找海克斯大乱斗对局');
+      publishStatus(true);
+      return { ok: true, message: '开始寻找对局喵' };
+    }
+    let detail = '';
+    try {
+      const body = JSON.parse(res.body);
+      detail = body.message || body.errorCode || '';
+    } catch {
+      detail = res.body.slice(0, 200);
+    }
+    log(
+      `[WARN] 开始寻找对局失败: HTTP ${res.status}${detail ? ` ${detail}` : ''}`,
+    );
+    return {
+      ok: false,
+      message: `匹配失败: HTTP ${res.status}${detail ? ` ${detail}` : ''}`,
+    };
+  } catch (error) {
+    log(`[WARN] 开始寻找对局失败: ${error.message}`);
+    return { ok: false, message: error.message };
+  }
+}
+
 async function getGameflowPhase(client) {
   const res = await request(client, 'GET', '/lol-gameflow/v1/gameflow-phase');
   if (res.status !== 200 || !res.body.trim()) return null;
@@ -749,6 +982,7 @@ async function tickGameflow(client, runtime2) {
           partyId: String(lobby.partyId || ''),
           queueId: Number(lobby.gameConfig?.queueId) || null,
           size: Array.isArray(lobby.members) ? lobby.members.length : 0,
+          isLeader: lobby.localMember ? lobby.localMember.isLeader !== false : null,
         };
       } else {
         runtime2.inLobby = false;
@@ -1184,6 +1418,8 @@ async function handleSession(client, session, runtime2, state) {
     resetState(state);
     state.gameId = session.gameId;
     state.seenAt = Date.now();
+    runtime2.clientCards = [];
+    runtime2.clientCardsAt = 0;
     log(
       `进入选人: gameId=${session.gameId ?? '?'} queue=${session.queueId ?? '?'} phase=${info.phase}`,
     );
@@ -1376,9 +1612,7 @@ async function supervisor(runtime2) {
     try {
       const client = await discoverClient(runtime2.config, log);
       runtime2.client = client;
-      runtime2.catalog = await getChampionCatalog(client);
-      runtime2.names = new Map(runtime2.catalog.map((entry) => [entry.id, entry.name]));
-      log(`客户端英雄名映射: ${runtime2.catalog.length} 个`);
+      await refreshChampionCatalog(client, runtime2);
       if (!runtime2.warnedAboutWiner && isWinerRunning() && winerBenchAutoEnabled()) {
         runtime2.warnedAboutWiner = true;
         log(
@@ -1446,7 +1680,10 @@ async function main() {
   runtime.acceptTrade = acceptTrade;
   runtime.getFriends = getFriendsForUi;
   runtime.joinFriendLobby = joinFriendLobby;
+  runtime.createHextechLobby = createHextechLobby;
+  runtime.findMatch = findMatch;
 
+  loadChampionCache();
   publishStatus(true);
   log(`配置: ${configPath}`);
   log(`心愿英雄顺序: ${config.wishlist.join(', ')}`);
@@ -1454,9 +1691,7 @@ async function main() {
   if (hasFlag('--probe') || hasFlag('--list-champions')) {
     const client = await discoverClient(config, log);
     runtime.client = client;
-    runtime.catalog = await getChampionCatalog(client);
-    runtime.names = new Map(runtime.catalog.map((entry) => [entry.id, entry.name]));
-    log(`客户端英雄名映射: ${runtime.catalog.length} 个`);
+    await refreshChampionCatalog(client, runtime);
     if (hasFlag('--list-champions')) {
       for (const entry of runtime.catalog) {
         console.log(`${String(entry.id).padStart(4)}  ${entry.name}`);

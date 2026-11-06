@@ -27,6 +27,8 @@ const state = {
   es: null,
   friends: [],
   friendsError: '',
+  clientCardsKey: '',
+  idleWishKey: '',
 };
 
 function champIcon(id, name, size = '') {
@@ -74,6 +76,17 @@ function flowLabel(phase) {
   return FLOW_LABELS[phase] || phase || '--';
 }
 
+const PHASE_LABELS = {
+  PLANNING: '预选阶段',
+  BAN_PICK: '选择阶段',
+  FINALIZATION: '最终确认',
+  GAME_STARTING: '即将开始',
+};
+
+function phaseLabel(phase) {
+  return PHASE_LABELS[phase] || phase || '';
+}
+
 function showToast(message, kind = 'info') {
   const toast = $('toast');
   toast.textContent = message;
@@ -114,10 +127,21 @@ function renderStatus(s) {
   state.status = s;
 
   setConnection(s.connected, s.connected ? '已连接' : '未连接');
+  const statusDot = $('statusDot');
+  if (statusDot) {
+    statusDot.className = `status-dot ${
+      !s.connected ? 'off' : s.pluginOnline ? 'ok' : 'warn'
+    }`;
+  }
   const phase = $('phase');
   const flow = flowLabel(s.gameflowPhase);
-  phase.textContent = s.phase || (s.gameflowPhase ? flow : '等待选人');
+  phase.textContent = s.phase
+    ? phaseLabel(s.phase)
+    : s.gameflowPhase
+      ? flow
+      : '等待选人';
   phase.className = `pill phase${s.phase || s.gameflowPhase ? ' active' : ''}`;
+  $('phaseHint').textContent = phaseLabel(s.phase) || '选人阶段';
 
   if (s.held) {
     const name = s.held.name || nameOf(s.held.id);
@@ -127,7 +151,7 @@ function renderStatus(s) {
       <span class="fallback-letter">${esc(firstChar(name))}</span>`;
     $('heldName').textContent = name;
     $('heldMeta').textContent = [
-      s.phase ? `阶段 ${s.phase}` : null,
+      s.phase ? `阶段 ${phaseLabel(s.phase)}` : null,
       s.queueId ? `队列 ${s.queueId}` : null,
     ]
       .filter(Boolean)
@@ -156,6 +180,13 @@ function renderStatus(s) {
   } else {
     $('timer').textContent = `${Math.max(0, Math.ceil(timeLeft / 1000))} 秒`;
   }
+  $('timer').classList.toggle(
+    'urgent',
+    !s.isInfinite &&
+      typeof timeLeft === 'number' &&
+      timeLeft >= 0 &&
+      timeLeft <= 5000,
+  );
 
   if (s.bench?.length) {
     const wishRanks = new Map(
@@ -175,6 +206,57 @@ function renderStatus(s) {
       .join('');
   } else {
     $('bench').innerHTML = '<div class="empty">备选席还是空的喵...</div>';
+  }
+  $('benchCount').textContent = s.bench?.length ? `${s.bench.length} 个` : '空';
+
+  const idle = !s.phase;
+  $('idlePanel').classList.toggle('hidden', !idle);
+  $('benchHead').classList.toggle('hidden', idle);
+  $('bench').classList.toggle('hidden', idle);
+  if (idle) {
+    const wishlist = s.wishlist || [];
+    const wishKey = wishlist.map((champion) => champion.id).join(',');
+    if (state.idleWishKey !== wishKey) {
+      state.idleWishKey = wishKey;
+      $('idleWishlist').innerHTML = wishlist
+        .map(
+          (champion, index) => `<span class="idle-wish-chip">
+            <span class="rank">#${index + 1}</span>
+            ${champIcon(champion.id, champion.name)}
+            <span>${esc(champion.name)}</span>
+          </span>`,
+        )
+        .join('');
+    }
+  } else {
+    state.idleWishKey = '';
+  }
+
+  const clientCards = (s.clientCards || []).filter((card) => card && card.id && card.name);
+  const cardsFresh = s.clientCardsAt && Date.now() - s.clientCardsAt < 15000;
+  const clientCardsKey = clientCards.map((card) => `${card.id}:${card.name}`).join('|');
+  if (clientCards.length && cardsFresh) {
+    if (state.clientCardsKey !== clientCardsKey) {
+      state.clientCardsKey = clientCardsKey;
+      $('clientCards').innerHTML =
+        '<span class="client-cards-label">客户端三选一 · 点这里让插件替你点客户端</span>' +
+        clientCards
+          .map(
+            (card, index) => `<button class="client-card-chip" data-client-id="${card.id}"
+                data-client-name="${esc(card.name)}" data-client-index="${index}"
+                title="让客户端插件点「${esc(card.name)}」">
+                ${champIcon(card.id, card.name)}
+                <span class="client-card-name">${esc(card.name)}</span>
+                <span class="choose">选它</span>
+              </button>`,
+          )
+          .join('');
+    }
+    $('clientCards').classList.remove('hidden');
+  } else {
+    state.clientCardsKey = '';
+    $('clientCards').classList.add('hidden');
+    $('clientCards').innerHTML = '';
   }
 
   const benchIds = new Set((s.bench || []).map((champion) => champion.id));
@@ -215,6 +297,10 @@ function renderStatus(s) {
   $('connDetail').textContent = s.client
     ? `127.0.0.1:${s.client.port}`
     : '尚未连接';
+  $('pluginDetail').textContent = s.pluginOnline
+    ? `已连接${s.pluginVersion ? ` · v${s.pluginVersion}` : ''}`
+    : '未连接（重启客户端加载插件）';
+  $('pluginDetail').className = s.pluginOnline ? 'presence-chat' : 'muted';
   $('flowDetail').textContent = flow;
   const presenceLabels = {
     chat: '在线',
@@ -236,14 +322,75 @@ function renderStatus(s) {
   $('lobbyDetail').textContent = s.inLobby
     ? `房间 ${s.lobby?.size || '?'} 人${
         s.lobby?.queueId ? ` · 队列 ${s.lobby.queueId}` : ''
-      }`
+      }${s.lobby?.isLeader === true ? ' · 房主' : ''}`
     : '不在房间';
   $('leaveLobbyBtn').classList.toggle('hidden', !s.inLobby);
+
+  const createLobbyBtn = $('createLobbyBtn');
+  const findMatchBtn = $('findMatchBtn');
+  const lobbyHint = $('lobbyHint');
+  if (createLobbyBtn && findMatchBtn && lobbyHint) {
+    const busyPhases = [
+      'Matchmaking',
+      'ReadyCheck',
+      'ChampSelect',
+      'GameStart',
+      'InProgress',
+      'Reconnect',
+      'WaitingForStats',
+      'PreEndOfGame',
+      'EndOfGame',
+    ];
+    const canCreate =
+      s.connected && !s.inLobby && !busyPhases.includes(s.gameflowPhase);
+    const canFind =
+      s.connected &&
+      s.inLobby &&
+      s.lobby?.queueId === 2400 &&
+      s.lobby?.isLeader !== false &&
+      ![
+        'Matchmaking',
+        'ReadyCheck',
+        'ChampSelect',
+        'GameStart',
+        'InProgress',
+        'Reconnect',
+      ].includes(s.gameflowPhase);
+    createLobbyBtn.disabled = !canCreate;
+    findMatchBtn.disabled = !canFind;
+
+    let hint = '创建房间后可以开始匹配';
+    if (!s.connected) {
+      hint = '客户端未连接';
+    } else if (s.inLobby) {
+      if (s.lobby?.queueId !== 2400) {
+        hint = '当前房间不是海克斯大乱斗';
+      } else if (s.lobby?.isLeader === false) {
+        hint = '只有房主能开始匹配';
+      } else if (s.gameflowPhase === 'Matchmaking') {
+        hint = '正在寻找对局...';
+      } else if (s.gameflowPhase === 'ReadyCheck') {
+        hint = '准备确认中...';
+      } else if (
+        ['ChampSelect', 'GameStart', 'InProgress', 'Reconnect'].includes(
+          s.gameflowPhase,
+        )
+      ) {
+        hint = '游戏/选人中不能开始匹配';
+      } else {
+        hint = '房间已就绪 · 可以开始匹配';
+      }
+    } else if (busyPhases.includes(s.gameflowPhase)) {
+      hint = '游戏/选人中不能创建房间';
+    }
+    lobbyHint.textContent = hint;
+  }
 
   const extras = [];
   if (s.autoPlayAgain) extras.push('自动返回');
   if (s.autoAccept) extras.push('自动接受');
   if (s.autoSelectCandidate) extras.push('待选自动');
+  if (s.autoPickClientCard) extras.push('三选一自动');
   $('modeDetail').textContent = `${s.dryRun ? '练习模式' : '自动换人'}${
     s.paused ? ' · 已暂停' : ''
   }${extras.length ? ` · ${extras.join(' / ')}` : ''}`;
@@ -273,7 +420,11 @@ function renderStatus(s) {
     state.settingsLoaded = true;
   }
 
-  if (s.connected && state.catalog.length === 0) {
+  if (
+    s.connected &&
+    (state.catalog.length === 0 ||
+      (s.catalogSize && state.catalog.length !== s.catalogSize))
+  ) {
     refreshCatalog();
   }
 }
@@ -552,6 +703,37 @@ async function loadFriends() {
   renderFriends();
 }
 
+async function createLobby() {
+  try {
+    showToast('正在创建海克斯大乱斗房间喵...');
+    const result = await postJson('/api/create-lobby', {});
+    if (result.ok) {
+      showToast(result.data?.message || '已创建海克斯大乱斗房间喵');
+      refreshStatus();
+    } else {
+      showToast(result.data?.message || '创建房间失败喵', 'error');
+    }
+  } catch (error) {
+    showToast(`创建房间失败: ${error.message}`, 'error');
+  }
+}
+
+async function findMatch() {
+  if (!confirm('确认开始寻找海克斯大乱斗对局喵？整个房间会进入匹配。')) return;
+  try {
+    showToast('正在开始寻找对局喵...');
+    const result = await postJson('/api/find-match', {});
+    if (result.ok) {
+      showToast(result.data?.message || '开始寻找对局喵');
+      refreshStatus();
+    } else {
+      showToast(result.data?.message || '开始匹配失败喵', 'error');
+    }
+  } catch (error) {
+    showToast(`开始匹配失败: ${error.message}`, 'error');
+  }
+}
+
 async function joinFriend(partyId, name) {
   try {
     showToast(`正在加入 ${name} 的房间喵...`);
@@ -579,6 +761,7 @@ function loadSettings(config) {
   $('autoPlayAgain').checked = config.autoPlayAgain !== false;
   $('autoAccept').checked = config.autoAccept !== false;
   $('autoSelectCandidate').checked = config.autoSelectCandidate !== false;
+  $('autoPickClientCard').checked = config.autoPickClientCard !== false;
   $('benchBurstMode').checked = config.benchBurstMode !== false;
   $('dryRun').checked = Boolean(config.dryRun);
 }
@@ -614,6 +797,7 @@ async function saveSettings() {
     autoPlayAgain: $('autoPlayAgain').checked,
     autoAccept: $('autoAccept').checked,
     autoSelectCandidate: $('autoSelectCandidate').checked,
+    autoPickClientCard: $('autoPickClientCard').checked,
     benchBurstMode: $('benchBurstMode').checked,
     dryRun: $('dryRun').checked,
   };
@@ -652,6 +836,20 @@ async function manualSwap(id) {
     }
   } catch (error) {
     showToast(`换人失败: ${error.message}`, 'error');
+  }
+}
+
+async function selectClientCard(id, name, index) {
+  if (!id || !name) return;
+  try {
+    const result = await postJson('/api/client-card-select', { id, name, index });
+    if (result.ok) {
+      showToast(`已让客户端插件选 ${name} 喵，盯着客户端看`);
+    } else {
+      showToast(result.data?.message || '代选请求失败喵', 'error');
+    }
+  } catch (error) {
+    showToast(`代选失败: ${error.message}`, 'error');
   }
 }
 
@@ -753,6 +951,32 @@ function bindEvents() {
   $('pauseBtn').addEventListener('click', togglePause);
   $('saveSettings').addEventListener('click', saveSettings);
 
+  const statusBtn = $('statusBtn');
+  const statusPopover = $('statusPopover');
+  const closeStatusPopover = () => {
+    if (!statusBtn || !statusPopover) return;
+    statusPopover.classList.add('hidden');
+    statusBtn.classList.remove('open');
+    statusBtn.setAttribute('aria-expanded', 'false');
+  };
+  if (statusBtn && statusPopover) {
+    statusBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const willOpen = statusPopover.classList.contains('hidden');
+      statusPopover.classList.toggle('hidden', !willOpen);
+      statusBtn.classList.toggle('open', willOpen);
+      statusBtn.setAttribute('aria-expanded', String(willOpen));
+    });
+    document.addEventListener('click', (event) => {
+      if (statusPopover.classList.contains('hidden')) return;
+      if (statusPopover.contains(event.target) || statusBtn.contains(event.target)) return;
+      closeStatusPopover();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closeStatusPopover();
+    });
+  }
+
   $('leaveLobbyBtn').addEventListener('click', async () => {
     if (!confirm('确认离开当前房间喵？如果你是房主，队伍可能会解散。')) return;
     const result = await postJson('/api/leave-lobby', {});
@@ -784,6 +1008,16 @@ function bindEvents() {
     manualSwap(Number(button.dataset.champ));
   });
 
+  $('clientCards').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-client-id]');
+    if (!button) return;
+    selectClientCard(
+      Number(button.dataset.clientId),
+      button.dataset.clientName || '',
+      Number(button.dataset.clientIndex || 0),
+    );
+  });
+
   $('candidates').addEventListener('click', (event) => {
     const tradeButton = event.target.closest('[data-trade]');
     if (tradeButton) {
@@ -796,6 +1030,12 @@ function bindEvents() {
   });
 
   $('refreshFriends').addEventListener('click', loadFriends);
+  if ($('createLobbyBtn')) {
+    $('createLobbyBtn').addEventListener('click', createLobby);
+  }
+  if ($('findMatchBtn')) {
+    $('findMatchBtn').addEventListener('click', findMatch);
+  }
   $('friends').addEventListener('click', (event) => {
     const button = event.target.closest('[data-join]');
     if (!button) return;

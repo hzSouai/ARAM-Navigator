@@ -21,6 +21,48 @@
       <div class="top-actions">
         <span id="conn" class="pill offline">未连接</span>
         <span id="phase" class="pill phase">等待选人</span>
+        <div class="status-wrap">
+          <button
+            id="statusBtn"
+            type="button"
+            class="btn ghost small status-btn"
+            aria-haspopup="dialog"
+            aria-expanded="false"
+          >
+            <span id="statusDot" class="status-dot off"></span>
+            运行状态
+            <span class="chev">▾</span>
+          </button>
+          <div
+            id="statusPopover"
+            class="status-popover hidden"
+            role="dialog"
+            aria-label="运行状态"
+          >
+            <div class="status-popover-head">
+              <span>运行状态</span>
+              <span class="live-tag"><i></i>实时</span>
+            </div>
+            <dl class="kv">
+              <dt>连接</dt>
+              <dd id="connDetail">--</dd>
+              <dt>客户端插件</dt>
+              <dd id="pluginDetail">--</dd>
+              <dt>我的状态</dt>
+              <dd id="presenceDetail">--</dd>
+              <dt>客户端阶段</dt>
+              <dd id="flowDetail">--</dd>
+              <dt>房间</dt>
+              <dd id="lobbyDetail">--</dd>
+              <dt>模式</dt>
+              <dd id="modeDetail">--</dd>
+              <dt>队列 / 对局</dt>
+              <dd id="gameDetail">--</dd>
+              <dt>最近动作</dt>
+              <dd id="lastAction">--</dd>
+            </dl>
+          </div>
+        </div>
         <button id="pauseBtn" class="btn ghost">暂停自动</button>
         <button id="settingsBtn" class="btn ghost small">⚙ 设置</button>
         <button id="quitBtn" class="btn danger small" title="退出助手">退出</button>
@@ -28,71 +70,107 @@
     </header>
 
     <main class="layout">
-      <section class="grid status-grid">
-        <article class="card hero-card">
-          <div class="card-title">
-            <span>当前英雄</span>
-            <span class="muted">手上</span>
-          </div>
-          <div class="hero-row">
-            <div id="heldIcon" class="champ-icon large placeholder">
-              <span class="fallback-letter">?</span>
+      <section class="dashboard">
+        <article class="card selection-card">
+          <div class="selection-head">
+            <div class="held-block">
+              <div class="section-kicker">当前英雄 · 手上</div>
+              <div class="hero-row">
+                <div id="heldIcon" class="champ-icon large placeholder">
+                  <span class="fallback-letter">?</span>
+                </div>
+                <div class="hero-copy">
+                  <div id="heldName" class="hero-name">未进入选人</div>
+                  <div id="heldMeta" class="muted">等待客户端喵...</div>
+                </div>
+              </div>
             </div>
-            <div class="hero-copy">
-              <div id="heldName" class="hero-name">未进入选人</div>
-              <div id="heldMeta" class="muted">等待客户端喵...</div>
+            <div class="timer-block">
+              <span id="timerLabel" class="timer-label">阶段剩余</span>
+              <strong id="timer">--</strong>
+              <span id="phaseHint" class="timer-hint">选人阶段</span>
             </div>
           </div>
-          <div class="timer-row">
-            <span class="muted" id="timerLabel">阶段剩余</span>
-            <strong id="timer">--</strong>
-          </div>
-        </article>
 
-        <article class="card bench-card">
-          <div class="card-title">
-            <span>备选席</span>
-            <span class="muted">点击英雄手动秒换 · 心愿英雄会高亮</span>
-          </div>
+          <div class="selection-divider"></div>
+
+          <div id="clientCards" class="client-cards hidden"></div>
           <div id="candidates" class="candidate-strip hidden"></div>
+
+          <div id="idlePanel" class="idle-panel hidden">
+            <div class="idle-head">
+              <div class="idle-mark">喵</div>
+              <div>
+                <div class="idle-title">待命中 · 等待进入选人</div>
+                <div class="muted">开始大乱斗 / 海克斯大乱斗后，这里会自动切到选人操作台喵</div>
+              </div>
+            </div>
+            <div class="idle-steps">
+              <div class="idle-step">
+                <span>1</span>
+                <b>三选一</b>
+                <em>网页会显示三张卡，点「选它」就会替你点客户端</em>
+              </div>
+              <div class="idle-step">
+                <span>2</span>
+                <b>心愿自动</b>
+                <em>三张卡里有心愿英雄时，自动选优先级最高的</em>
+              </div>
+              <div class="idle-step">
+                <span>3</span>
+                <b>备选席</b>
+                <em>选人后点备选席头像，可以手动秒换</em>
+              </div>
+            </div>
+            <div class="idle-wish">
+              <div class="idle-wish-head">
+                <span>心愿优先级</span>
+                <span class="muted">越靠前越优先</span>
+              </div>
+              <div id="idleWishlist" class="idle-wish-list"></div>
+            </div>
+          </div>
+
+          <div id="benchHead" class="bench-head">
+            <div class="bench-title">
+              <span class="section-title">备选席</span>
+              <span class="muted">点击英雄手动秒换 · 心愿英雄会高亮</span>
+            </div>
+            <span id="benchCount" class="bench-count">空</span>
+          </div>
           <div id="bench" class="bench-grid">
             <div class="empty">等待备选席喵...</div>
           </div>
         </article>
 
-        <article class="card now-card">
-          <div class="card-title"><span>运行状态</span></div>
-          <dl class="kv">
-            <dt>连接</dt>
-            <dd id="connDetail">--</dd>
-            <dt>我的状态</dt>
-            <dd id="presenceDetail">--</dd>
-            <dt>客户端阶段</dt>
-            <dd id="flowDetail">--</dd>
-            <dt>房间</dt>
-            <dd id="lobbyDetail">--</dd>
-            <dt>模式</dt>
-            <dd id="modeDetail">--</dd>
-            <dt>队列 / 对局</dt>
-            <dd id="gameDetail">--</dd>
-            <dt>最近动作</dt>
-            <dd id="lastAction">--</dd>
-          </dl>
-        </article>
-      </section>
-
-      <section class="card friends-card">
-        <div class="card-title">
-          <span>好友房间</span>
-          <span class="muted">点「加入」直接进好友的房间喵</span>
-          <span class="friends-actions">
-            <button id="leaveLobbyBtn" class="btn ghost small hidden">离开房间</button>
-            <button id="refreshFriends" class="btn ghost small">刷新</button>
-          </span>
-        </div>
-        <div id="friends" class="friends-grid">
-          <div class="empty">正在读取好友列表喵...</div>
-        </div>
+        <aside class="side-column">
+          <article class="card friends-card">
+            <div class="card-title">
+              <span>好友房间</span>
+              <span class="friends-actions">
+                <button id="leaveLobbyBtn" class="btn ghost small hidden">离开房间</button>
+                <button id="refreshFriends" class="btn ghost small">刷新</button>
+              </span>
+            </div>
+            <div id="friends" class="friends-grid">
+              <div class="empty">正在读取好友列表喵...</div>
+            </div>
+            <div class="lobby-footer">
+              <div class="lobby-footer-head">
+                <span>海克斯大乱斗</span>
+                <span id="lobbyHint" class="muted">创建房间后可以开始匹配</span>
+              </div>
+              <div class="lobby-actions">
+                <button id="createLobbyBtn" type="button" class="btn small">
+                  创建海克斯大乱斗房间
+                </button>
+                <button id="findMatchBtn" type="button" class="btn ghost small">
+                  寻找对局
+                </button>
+              </div>
+            </div>
+          </article>
+        </aside>
       </section>
 
       <section class="card log-card">
@@ -183,6 +261,10 @@
                 <label class="switch-row">
                   <span>待选界面出现心愿英雄自动选</span>
                   <input id="autoSelectCandidate" type="checkbox" class="switch" />
+                </label>
+                <label class="switch-row">
+                  <span>客户端三选一出现心愿英雄自动选</span>
+                  <input id="autoPickClientCard" type="checkbox" class="switch" />
                 </label>
                 <label class="switch-row">
                   <span>海克斯爆发抢英雄（-1s 预发）</span>

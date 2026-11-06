@@ -1,5 +1,6 @@
 node_modules/
 logs/
+data/
 config.json
 config.local.json
 *.log
