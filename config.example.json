@@ -1,0 +1,39 @@
+{
+  "clientDir": "",
+  "wishlist": [
+    145,
+    136,
+    22,
+    17,
+    4,
+    110,
+    21,
+    202,
+    90,
+    41,
+    245,
+    235,
+    81
+  ],
+  "pollMs": 300,
+  "startupDelayMs": 2500,
+  "stablePolls": 4,
+  "allowedPhases": [
+    "BAN_PICK",
+    "FINALIZATION"
+  ],
+  "minTimeLeftMs": 1000,
+  "verifyDelayMs": 350,
+  "retryDelayMs": 600,
+  "maxRetries": 12,
+  "maxSwapsPerGame": 24,
+  "dryRun": false,
+  "webPort": 8765,
+  "autoPlayAgain": true,
+  "autoAccept": true,
+  "autoSelectCandidate": true,
+  "benchBurstMode": true,
+  "acceptDelayMs": 1500,
+  "playAgainDelayMs": 3000,
+  "lockfilePath": ""
+}

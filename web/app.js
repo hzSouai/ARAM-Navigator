@@ -1,0 +1,857 @@
+'use strict';
+
+const STATIC_MODE = new URLSearchParams(window.location.search).has('static');
+const $ = (id) => document.getElementById(id);
+const esc = (value) =>
+  String(value ?? '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[char]);
+const firstChar = (name) => [...String(name || '?')][0] || '?';
+const iconUrl = (id) => `/api/champion-icon/${id}`;
+
+const state = {
+  status: null,
+  config: null,
+  catalog: [],
+  logs: [],
+  lastLogSeq: 0,
+  wishlist: [],
+  renderedWishlistKey: '',
+  settingsLoaded: false,
+  dragging: false,
+  toastTimer: null,
+  es: null,
+  friends: [],
+  friendsError: '',
+};
+
+function champIcon(id, name, size = '') {
+  if (!id) {
+    return `<span class="champ-icon ${size} placeholder"><span class="fallback-letter">?</span></span>`;
+  }
+  return `<span class="champ-icon ${size}" title="${esc(name)}">
+    <img src="${iconUrl(id)}" alt="" loading="lazy"
+      onerror="this.style.display='none';this.parentElement.classList.add('fallback')">
+    <span class="fallback-letter">${esc(firstChar(name))}</span>
+  </span>`;
+}
+
+function nameOf(id) {
+  const number = Number(id);
+  const statusHit =
+    state.status?.wishlist?.find((item) => item.id === number) ||
+    state.status?.bench?.find((item) => item.id === number) ||
+    (state.status?.held?.id === number ? state.status.held : null);
+  if (statusHit?.name) return statusHit.name;
+  const catalogHit = state.catalog.find((item) => item.id === number);
+  return catalogHit?.name || String(number);
+}
+
+function fmtTime(at) {
+  if (!at) return '';
+  return new Date(at).toLocaleTimeString('zh-CN', { hour12: false });
+}
+
+const FLOW_LABELS = {
+  None: '空闲',
+  Lobby: '房间',
+  Matchmaking: '匹配中',
+  ReadyCheck: '准备确认',
+  ChampSelect: '选人',
+  GameStart: '游戏开始',
+  InProgress: '游戏中',
+  Reconnect: '重连中',
+  WaitingForStats: '结算中',
+  PreEndOfGame: '结算中',
+  EndOfGame: '对局结束',
+};
+
+function flowLabel(phase) {
+  return FLOW_LABELS[phase] || phase || '--';
+}
+
+function showToast(message, kind = 'info') {
+  const toast = $('toast');
+  toast.textContent = message;
+  toast.style.borderColor =
+    kind === 'error' ? 'rgba(255,107,107,.45)' : 'rgba(10,200,185,.35)';
+  toast.classList.remove('hidden');
+  clearTimeout(state.toastTimer);
+  state.toastTimer = setTimeout(() => toast.classList.add('hidden'), kind === 'error' ? 4200 : 2400);
+}
+
+async function requestJson(url, options = {}) {
+  const response = await fetch(url, options);
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+  return { ok: response.ok, status: response.status, data };
+}
+
+async function postJson(url, body) {
+  return requestJson(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+function setConnection(connected, label) {
+  const pill = $('conn');
+  pill.textContent = label || (connected ? '已连接' : '未连接');
+  pill.className = `pill ${connected ? 'online' : 'offline'}`;
+}
+
+function renderStatus(s) {
+  if (!s) return;
+  state.status = s;
+
+  setConnection(s.connected, s.connected ? '已连接' : '未连接');
+  const phase = $('phase');
+  const flow = flowLabel(s.gameflowPhase);
+  phase.textContent = s.phase || (s.gameflowPhase ? flow : '等待选人');
+  phase.className = `pill phase${s.phase || s.gameflowPhase ? ' active' : ''}`;
+
+  if (s.held) {
+    const name = s.held.name || nameOf(s.held.id);
+    $('heldIcon').className = 'champ-icon large';
+    $('heldIcon').innerHTML = `<img src="${iconUrl(s.held.id)}" alt=""
+        onerror="this.style.display='none';this.parentElement.classList.add('fallback')">
+      <span class="fallback-letter">${esc(firstChar(name))}</span>`;
+    $('heldName').textContent = name;
+    $('heldMeta').textContent = [
+      s.phase ? `阶段 ${s.phase}` : null,
+      s.queueId ? `队列 ${s.queueId}` : null,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+  } else {
+    $('heldIcon').className = 'champ-icon large placeholder';
+    $('heldIcon').innerHTML = '<span class="fallback-letter">?</span>';
+    $('heldName').textContent = '未进入选人';
+    $('heldMeta').textContent = s.connected ? '等待进入大乱斗选人喵...' : '等待客户端喵...';
+  }
+
+  const timeLeft = s.timeLeft;
+  if (s.queueId === 2400 && s.phase === 'BAN_PICK') {
+    $('timerLabel').textContent = '距可换人约';
+  } else if (s.queueId === 2400 && s.phase === 'FINALIZATION') {
+    $('timerLabel').textContent = '可换人剩余';
+  } else if (s.phase === 'FINALIZATION') {
+    $('timerLabel').textContent = '即将开始';
+  } else {
+    $('timerLabel').textContent = '阶段剩余';
+  }
+  if (s.isInfinite) {
+    $('timer').textContent = '∞';
+  } else if (timeLeft === null || timeLeft === undefined) {
+    $('timer').textContent = '--';
+  } else {
+    $('timer').textContent = `${Math.max(0, Math.ceil(timeLeft / 1000))} 秒`;
+  }
+
+  if (s.bench?.length) {
+    const wishRanks = new Map(
+      (s.wishlist || []).map((item, index) => [item.id, index + 1]),
+    );
+    $('bench').innerHTML = s.bench
+      .map((champion) => {
+        const rank = wishRanks.get(champion.id);
+        const title = `点击换到 ${champion.name}${rank ? ` · 心愿英雄优先级 #${rank}` : ''}`;
+        return `<button class="bench-item${rank ? ' wish' : ''}" data-champ="${champion.id}"
+            title="${esc(title)}">
+            ${rank ? `<span class="wish-badge">#${rank}</span>` : ''}
+            ${champIcon(champion.id, champion.name)}
+            <span>${esc(champion.name)}</span>
+          </button>`;
+      })
+      .join('');
+  } else {
+    $('bench').innerHTML = '<div class="empty">备选席还是空的喵...</div>';
+  }
+
+  const benchIds = new Set((s.bench || []).map((champion) => champion.id));
+  const extraCandidates = (s.candidates || []).filter(
+    (champion) => !benchIds.has(champion.id) && champion.id !== s.held?.id,
+  );
+  const tradeCandidates = (s.trades || []).filter(
+    (trade) => !benchIds.has(trade.id) && trade.id !== s.held?.id,
+  );
+  if (extraCandidates.length || tradeCandidates.length) {
+    $('candidates').classList.remove('hidden');
+    $('candidates').innerHTML =
+      '<span class="candidate-label">待选</span>' +
+      extraCandidates
+        .map(
+          (champion) => `<button class="candidate-chip" data-champ="${champion.id}"
+              title="选择 ${esc(champion.name)}">
+              ${champIcon(champion.id, champion.name)}
+              <span>${esc(champion.name)}</span>
+            </button>`,
+        )
+        .join('') +
+      tradeCandidates
+        .map(
+          (trade) => `<button class="candidate-chip" data-trade="${trade.tradeId}"
+              title="接受 ${esc(trade.name)} 的队友交易">
+              ${champIcon(trade.id, trade.name)}
+              <span>${esc(trade.name)}</span>
+              <span class="muted">队友交易</span>
+            </button>`,
+        )
+        .join('');
+  } else {
+    $('candidates').classList.add('hidden');
+    $('candidates').innerHTML = '';
+  }
+
+  $('connDetail').textContent = s.client
+    ? `127.0.0.1:${s.client.port}`
+    : '尚未连接';
+  $('flowDetail').textContent = flow;
+  const presenceLabels = {
+    chat: '在线',
+    away: '离开',
+    dnd: '勿扰',
+    mobile: '手机在线',
+    offline: '离线',
+  };
+  if (s.presence) {
+    const availability = s.presence.availability || 'chat';
+    $('presenceDetail').textContent = `${
+      presenceLabels[availability] || availability
+    }${s.presence.statusMessage ? ` · ${s.presence.statusMessage}` : ''}`;
+    $('presenceDetail').className = `presence-${availability}`;
+  } else {
+    $('presenceDetail').textContent = '--';
+    $('presenceDetail').className = '';
+  }
+  $('lobbyDetail').textContent = s.inLobby
+    ? `房间 ${s.lobby?.size || '?'} 人${
+        s.lobby?.queueId ? ` · 队列 ${s.lobby.queueId}` : ''
+      }`
+    : '不在房间';
+  $('leaveLobbyBtn').classList.toggle('hidden', !s.inLobby);
+
+  const extras = [];
+  if (s.autoPlayAgain) extras.push('自动返回');
+  if (s.autoAccept) extras.push('自动接受');
+  if (s.autoSelectCandidate) extras.push('待选自动');
+  $('modeDetail').textContent = `${s.dryRun ? '练习模式' : '自动换人'}${
+    s.paused ? ' · 已暂停' : ''
+  }${extras.length ? ` · ${extras.join(' / ')}` : ''}`;
+  $('gameDetail').textContent = `队列 ${s.queueId ?? '--'} / 对局 ${s.gameId ?? '--'}`;
+  if (s.lastAction) {
+    const action = s.lastAction;
+    const when = fmtTime(action.at);
+    const mark = action.ok ? '✅' : '⚠️';
+    $('lastAction').textContent = `${mark} ${action.manual ? '手动 · ' : ''}${
+      action.message || action.target?.name || '--'
+    }${when ? ` · ${when}` : ''}`;
+  } else {
+    $('lastAction').textContent = '暂无动作';
+  }
+
+  $('pauseBtn').textContent = s.paused ? '恢复自动' : '暂停自动';
+
+  const ids = (s.wishlist || []).map((item) => item.id);
+  const key = ids.join(',');
+  if (!state.dragging && key !== state.renderedWishlistKey) {
+    state.wishlist = ids;
+    renderWishlist(s.wishlist || []);
+  }
+
+  if (!state.settingsLoaded && s.config) {
+    loadSettings(s.config);
+    state.settingsLoaded = true;
+  }
+
+  if (s.connected && state.catalog.length === 0) {
+    refreshCatalog();
+  }
+}
+
+function renderWishlist(list) {
+  const ids = list.map((item) => item.id);
+  state.renderedWishlistKey = ids.join(',');
+  state.wishlist = ids;
+
+  if (!list.length) {
+    $('wishlist').innerHTML = '<div class="empty">还没有心愿英雄喵</div>';
+    return;
+  }
+
+  $('wishlist').innerHTML = list
+    .map(
+      (champion, index) => `<div class="wish-item" draggable="true" data-id="${champion.id}">
+        <span class="rank">${index + 1}</span>
+        ${champIcon(champion.id, champion.name || nameOf(champion.id))}
+        <span class="name">${esc(champion.name || nameOf(champion.id))}</span>
+        <span class="wish-actions">
+          <button data-act="up" title="上移">↑</button>
+          <button data-act="down" title="下移">↓</button>
+          <button data-act="remove" title="移除">×</button>
+        </span>
+      </div>`,
+    )
+    .join('');
+
+  let dragId = null;
+  for (const item of $('wishlist').querySelectorAll('.wish-item')) {
+    item.addEventListener('dragstart', (event) => {
+      dragId = Number(item.dataset.id);
+      state.dragging = true;
+      item.classList.add('dragging');
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', String(dragId));
+    });
+    item.addEventListener('dragend', () => {
+      state.dragging = false;
+      item.classList.remove('dragging');
+      dragId = null;
+    });
+    item.addEventListener('dragover', (event) => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+    });
+    item.addEventListener('drop', (event) => {
+      event.preventDefault();
+      const targetId = Number(item.dataset.id);
+      if (!dragId || dragId === targetId) return;
+      const ids = [...state.wishlist];
+      const from = ids.indexOf(dragId);
+      let to = ids.indexOf(targetId);
+      if (from < 0 || to < 0) return;
+      const [moved] = ids.splice(from, 1);
+      if (from < to) to -= 1;
+      ids.splice(to, 0, moved);
+      saveWishlist(ids);
+    });
+  }
+}
+
+async function saveWishlist(ids) {
+  state.wishlist = ids;
+  renderWishlist(ids.map((id) => ({ id, name: nameOf(id) })));
+  try {
+    const result = await postJson('/api/config', { wishlist: ids });
+    if (!result.ok) throw new Error(result.data?.message || `HTTP ${result.status}`);
+    state.config = result.data.config;
+    showToast('心愿顺序已保存喵');
+  } catch (error) {
+    showToast(`保存失败: ${error.message}`, 'error');
+  }
+}
+
+function moveWishlist(id, delta) {
+  const ids = [...state.wishlist];
+  const index = ids.indexOf(id);
+  const target = index + delta;
+  if (index < 0 || target < 0 || target >= ids.length) return;
+  [ids[index], ids[target]] = [ids[target], ids[index]];
+  saveWishlist(ids);
+}
+
+function removeWishlist(id) {
+  saveWishlist(state.wishlist.filter((item) => item !== id));
+}
+
+async function addChampion(id) {
+  if (state.wishlist.includes(id)) {
+    showToast('这个英雄已经在心愿列表里了喵');
+    return;
+  }
+  if (state.wishlist.length >= 20) {
+    showToast('最多 20 个心愿英雄喵', 'error');
+    return;
+  }
+  await saveWishlist([...state.wishlist, id]);
+  $('search').value = '';
+  hideSearch();
+}
+
+function renderSearchResults() {
+  const query = $('search').value.trim().toLowerCase();
+  const results = $('searchResults');
+  if (!query) {
+    hideSearch();
+    return;
+  }
+  if (state.catalog.length === 0) {
+    results.innerHTML = '<div class="empty">英雄列表还在加载，等客户端连上喵...</div>';
+    results.classList.remove('hidden');
+    return;
+  }
+
+  const matches = state.catalog
+    .filter((champion) => !state.wishlist.includes(champion.id))
+    .filter((champion) => {
+      const name = String(champion.name || '').toLowerCase();
+      const alias = String(champion.alias || '').toLowerCase();
+      return name.includes(query) || alias.includes(query) || String(champion.id) === query;
+    })
+    .slice(0, 12);
+
+  if (!matches.length) {
+    results.innerHTML = '<div class="empty">没有找到匹配的英雄喵</div>';
+    results.classList.remove('hidden');
+    return;
+  }
+
+  results.innerHTML = matches
+    .map(
+      (champion) => `<button type="button" data-add="${champion.id}">
+        ${champIcon(champion.id, champion.name)}
+        <span>${esc(champion.name)}</span>
+        <span class="muted">#${champion.id}</span>
+      </button>`,
+    )
+    .join('');
+  results.classList.remove('hidden');
+}
+
+function hideSearch() {
+  $('searchResults').classList.add('hidden');
+}
+
+async function refreshCatalog() {
+  try {
+    const result = await requestJson('/api/champions');
+    if (result.ok && Array.isArray(result.data)) {
+      state.catalog = result.data;
+    }
+  } catch {
+    // The client may still be connecting.
+  }
+}
+
+const QUEUE_NAMES = {
+  400: '匹配',
+  420: '单双排',
+  430: '匹配',
+  440: '灵活排位',
+  450: '大乱斗',
+  1700: '斗魂竞技场',
+  1710: '斗魂竞技场',
+  2400: '海克斯大乱斗',
+};
+
+function queueLabel(value) {
+  const text = String(value || '');
+  if (!text) return '';
+  if (text.includes('KIWI')) return '海克斯大乱斗';
+  if (text.includes('ARAM')) return '大乱斗';
+  if (text.includes('RANKED_SOLO')) return '单双排';
+  if (text.includes('RANKED_FLEX')) return '灵活排位';
+  if (text.includes('ARENA')) return '斗魂竞技场';
+  return '';
+}
+
+function queueLabelById(id) {
+  return QUEUE_NAMES[Number(id)] || '';
+}
+
+function friendStatus(friend) {
+  const game = String(friend.gameStatus || '').toLowerCase();
+  let label;
+  let className = '';
+
+  if (friend.inMyParty) {
+    label = '同房间';
+  } else if (game === 'inprogress' || game === 'ingame') {
+    label = '游戏中';
+    className = 'in-game';
+  } else if (game === 'championselect') {
+    label = '选人中';
+    className = 'in-game';
+  } else if (game === 'inqueue') {
+    label = '队列中';
+    className = 'in-room';
+  } else if (game === 'spectating') {
+    label = '观战中';
+  } else if (game.startsWith('hosting')) {
+    label = '开房间';
+    className = 'in-room';
+  } else if (game === 'outofgame') {
+    label = friend.partyId ? '房间' : '空闲';
+    className = friend.partyId ? 'in-room' : '';
+  } else {
+    label = friend.gameStatus || '在线';
+  }
+
+  if (['inprogress', 'ingame', 'championselect', 'inqueue'].includes(game)) {
+    const mode = queueLabel(friend.gameQueueType) || queueLabelById(friend.queueId);
+    if (mode) label += ` · ${mode}`;
+  }
+  if (friend.availability === 'dnd') label += ' · 勿扰';
+  else if (friend.availability === 'away') label += ' · 离开';
+
+  return { label, className };
+}
+
+function renderFriends() {
+  const container = $('friends');
+  if (state.friendsError) {
+    container.innerHTML = `<div class="empty">${esc(state.friendsError)}</div>`;
+    return;
+  }
+  if (!state.friends.length) {
+    container.innerHTML = '<div class="empty">没有在线好友喵</div>';
+    return;
+  }
+
+  const joinable = state.friends.filter((friend) => friend.joinable);
+  const header = joinable.length
+    ? ''
+    : '<div class="empty">暂时没有可加入的好友房间喵</div>';
+
+  container.innerHTML =
+    header +
+    state.friends
+      .map((friend) => {
+        const status = friendStatus(friend);
+        return `<div class="friend-card ${friend.joinable ? 'joinable' : ''}">
+          <span class="friend-avatar">${esc(firstChar(friend.name))}</span>
+          <div class="friend-info">
+            <span class="friend-name" title="${esc(friend.name)}">${esc(friend.name)}</span>
+            <span class="friend-status ${status.className}">${esc(status.label)}</span>
+          </div>
+          ${
+            friend.joinable
+              ? `<button class="btn small" data-join="${esc(friend.partyId)}"
+                   data-name="${esc(friend.name)}">加入</button>`
+              : `<span class="friend-lock">${friend.inMyParty ? '已在大厅' : '不可加入'}</span>`
+          }
+        </div>`;
+      })
+      .join('');
+}
+
+async function loadFriends() {
+  try {
+    const result = await requestJson('/api/friends');
+    if (result.ok && result.data?.ok) {
+      state.friends = result.data.friends || [];
+      state.friendsError = '';
+    } else {
+      state.friends = [];
+      state.friendsError =
+        result.data?.message || `读取好友失败: HTTP ${result.status}`;
+    }
+  } catch (error) {
+    state.friends = [];
+    state.friendsError = error.message;
+  }
+  renderFriends();
+}
+
+async function joinFriend(partyId, name) {
+  try {
+    showToast(`正在加入 ${name} 的房间喵...`);
+    const result = await postJson('/api/join', { partyId });
+    if (result.ok) {
+      showToast(`已加入 ${name} 的房间喵`);
+      await loadFriends();
+      refreshStatus();
+    } else {
+      showToast(result.data?.message || '加入失败喵', 'error');
+    }
+  } catch (error) {
+    showToast(`加入失败: ${error.message}`, 'error');
+  }
+}
+
+function loadSettings(config) {
+  if (!config) return;
+  $('startupDelayMs').value = config.startupDelayMs ?? 2500;
+  $('stablePolls').value = config.stablePolls ?? 4;
+  $('minTimeLeftMs').value = config.minTimeLeftMs ?? 1000;
+  $('maxRetries').value = config.maxRetries ?? 4;
+  $('acceptDelayMs').value = config.acceptDelayMs ?? 1500;
+  $('playAgainDelayMs').value = config.playAgainDelayMs ?? 3000;
+  $('autoPlayAgain').checked = config.autoPlayAgain !== false;
+  $('autoAccept').checked = config.autoAccept !== false;
+  $('autoSelectCandidate').checked = config.autoSelectCandidate !== false;
+  $('benchBurstMode').checked = config.benchBurstMode !== false;
+  $('dryRun').checked = Boolean(config.dryRun);
+}
+
+async function openSettings() {
+  try {
+    const result = await requestJson('/api/config');
+    if (result.ok && result.data) {
+      state.config = result.data;
+      loadSettings(result.data);
+      state.settingsLoaded = true;
+    }
+  } catch {
+    // Keep the values already on screen.
+  }
+  $('settingsModal').classList.remove('hidden');
+  document.body.classList.add('modal-open');
+}
+
+function closeSettings() {
+  $('settingsModal').classList.add('hidden');
+  document.body.classList.remove('modal-open');
+}
+
+async function saveSettings() {
+  const payload = {
+    startupDelayMs: Number($('startupDelayMs').value),
+    stablePolls: Number($('stablePolls').value),
+    minTimeLeftMs: Number($('minTimeLeftMs').value),
+    maxRetries: Number($('maxRetries').value),
+    acceptDelayMs: Number($('acceptDelayMs').value),
+    playAgainDelayMs: Number($('playAgainDelayMs').value),
+    autoPlayAgain: $('autoPlayAgain').checked,
+    autoAccept: $('autoAccept').checked,
+    autoSelectCandidate: $('autoSelectCandidate').checked,
+    benchBurstMode: $('benchBurstMode').checked,
+    dryRun: $('dryRun').checked,
+  };
+  try {
+    const result = await postJson('/api/config', payload);
+    if (!result.ok) throw new Error(result.data?.message || `HTTP ${result.status}`);
+    state.config = result.data.config;
+    loadSettings(state.config);
+    closeSettings();
+    showToast('设置已保存喵');
+  } catch (error) {
+    showToast(`保存失败: ${error.message}`, 'error');
+  }
+}
+
+async function togglePause() {
+  const paused = !state.status?.paused;
+  try {
+    const result = await postJson('/api/pause', { paused });
+    if (!result.ok) throw new Error(result.data?.message || `HTTP ${result.status}`);
+    if (state.status) state.status.paused = paused;
+    $('pauseBtn').textContent = paused ? '恢复自动' : '暂停自动';
+    showToast(paused ? '自动换人已暂停喵' : '自动换人已恢复喵');
+  } catch (error) {
+    showToast(`操作失败: ${error.message}`, 'error');
+  }
+}
+
+async function manualSwap(id) {
+  try {
+    const result = await postJson('/api/swap', { championId: id });
+    if (result.ok) {
+      showToast(`已确认换到 ${nameOf(id)} 喵`);
+    } else {
+      showToast(result.data?.message || '换人没有落地喵', 'error');
+    }
+  } catch (error) {
+    showToast(`换人失败: ${error.message}`, 'error');
+  }
+}
+
+async function manualTrade(tradeId) {
+  try {
+    const result = await postJson('/api/trade-accept', { tradeId });
+    if (result.ok) {
+      showToast(result.data?.message || '已接受队友交易喵');
+    } else {
+      showToast(result.data?.message || '接受交易失败喵', 'error');
+    }
+  } catch (error) {
+    showToast(`接受交易失败: ${error.message}`, 'error');
+  }
+}
+
+function appendLog(entry) {
+  if (!entry || entry.seq <= state.lastLogSeq) return;
+  state.lastLogSeq = entry.seq;
+  const line = document.createElement('div');
+  line.className = `log-line ${entry.level || 'info'}`;
+  const time = document.createElement('span');
+  time.className = 'log-time';
+  time.textContent = fmtTime(entry.at);
+  line.append(time, document.createTextNode(entry.message));
+  const log = $('log');
+  log.appendChild(line);
+  while (log.childElementCount > 500) log.firstElementChild.remove();
+  if ($('autoScroll').checked) log.scrollTop = log.scrollHeight;
+}
+
+function connectSSE() {
+  if (!('EventSource' in window)) return;
+  const source = new EventSource('/api/events');
+  state.es = source;
+  source.addEventListener('status', (event) => {
+    try {
+      renderStatus(JSON.parse(event.data));
+    } catch {
+      // Ignore a malformed frame.
+    }
+  });
+  source.addEventListener('log', (event) => {
+    try {
+      appendLog(JSON.parse(event.data));
+    } catch {
+      // Ignore.
+    }
+  });
+  source.onopen = () => setConnection(true, '已连接');
+  source.onerror = () => setConnection(false, '重连中');
+}
+
+async function refreshStatus() {
+  try {
+    const result = await requestJson('/api/status');
+    if (result.ok) renderStatus(result.data);
+  } catch {
+    setConnection(false, '未连接');
+  }
+}
+
+async function boot() {
+  bindEvents();
+
+  const [statusRes, configRes, catalogRes, logRes] = await Promise.all([
+    requestJson('/api/status').catch(() => ({ ok: false })),
+    requestJson('/api/config').catch(() => ({ ok: false })),
+    requestJson('/api/champions').catch(() => ({ ok: false })),
+    requestJson('/api/log?since=0').catch(() => ({ ok: false })),
+  ]);
+
+  if (catalogRes.ok && Array.isArray(catalogRes.data)) state.catalog = catalogRes.data;
+  if (configRes.ok && configRes.data) {
+    state.config = configRes.data;
+    loadSettings(state.config);
+    state.settingsLoaded = true;
+  }
+  if (logRes.ok && Array.isArray(logRes.data?.logs)) {
+    logRes.data.logs.forEach(appendLog);
+  }
+  if (statusRes.ok) renderStatus(statusRes.data);
+  if (state.status?.connected && state.catalog.length === 0) refreshCatalog();
+
+  await loadFriends();
+
+  if (STATIC_MODE && new URLSearchParams(window.location.search).has('settings')) {
+    openSettings();
+  }
+
+  if (!STATIC_MODE) {
+    connectSSE();
+    setInterval(refreshStatus, 5000);
+    setInterval(loadFriends, 15000);
+  }
+}
+
+function bindEvents() {
+  $('pauseBtn').addEventListener('click', togglePause);
+  $('saveSettings').addEventListener('click', saveSettings);
+
+  $('leaveLobbyBtn').addEventListener('click', async () => {
+    if (!confirm('确认离开当前房间喵？如果你是房主，队伍可能会解散。')) return;
+    const result = await postJson('/api/leave-lobby', {});
+    if (result.ok) showToast('已离开房间喵');
+    else showToast(result.data?.message || '离开失败', 'error');
+  });
+  $('settingsBtn').addEventListener('click', openSettings);
+  document.querySelectorAll('[data-close-settings]').forEach((element) => {
+    element.addEventListener('click', closeSettings);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeSettings();
+  });
+
+  $('wishlist').addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-act]');
+    if (!button) return;
+    const row = button.closest('.wish-item');
+    if (!row) return;
+    const id = Number(row.dataset.id);
+    if (button.dataset.act === 'up') moveWishlist(id, -1);
+    if (button.dataset.act === 'down') moveWishlist(id, 1);
+    if (button.dataset.act === 'remove') removeWishlist(id);
+  });
+
+  $('bench').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-champ]');
+    if (!button) return;
+    manualSwap(Number(button.dataset.champ));
+  });
+
+  $('candidates').addEventListener('click', (event) => {
+    const tradeButton = event.target.closest('[data-trade]');
+    if (tradeButton) {
+      manualTrade(Number(tradeButton.dataset.trade));
+      return;
+    }
+    const button = event.target.closest('[data-champ]');
+    if (!button) return;
+    manualSwap(Number(button.dataset.champ));
+  });
+
+  $('refreshFriends').addEventListener('click', loadFriends);
+  $('friends').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-join]');
+    if (!button) return;
+    joinFriend(button.dataset.join, button.dataset.name || '好友');
+  });
+
+  $('search').addEventListener('input', renderSearchResults);
+  $('search').addEventListener('focus', renderSearchResults);
+  $('search').addEventListener('blur', () => setTimeout(hideSearch, 180));
+  $('searchResults').addEventListener('mousedown', (event) => {
+    const button = event.target.closest('[data-add]');
+    if (!button) return;
+    event.preventDefault();
+    addChampion(Number(button.dataset.add));
+  });
+
+  $('clearLogs').addEventListener('click', () => {
+    $('log').innerHTML = '';
+  });
+
+  $('openLogsBtn').addEventListener('click', async () => {
+    const result = await postJson('/api/open-logs', {});
+    if (result.ok) showToast('已打开日志目录喵');
+    else showToast(result.data?.message || '打开日志目录失败', 'error');
+  });
+
+  $('exportSessionBtn').addEventListener('click', async () => {
+    const result = await requestJson('/api/session');
+    if (!result.ok || result.data?.ok === false) {
+      showToast(result.data?.message || '当前不在选人阶段喵', 'error');
+      return;
+    }
+    const blob = new Blob([JSON.stringify(result.data, null, 2)], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `lol-session-${Date.now()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showToast('已导出当前选人会话喵');
+  });
+
+  $('quitBtn').addEventListener('click', async () => {
+    if (!confirm('确认退出助手喵？退出后自动换人会停止。')) return;
+    await postJson('/api/shutdown', {});
+    closeSettings();
+    setConnection(false, '已退出');
+    showToast('助手已退出，可以关掉这个页面了喵');
+  });
+}
+
+boot().catch((error) => {
+  setConnection(false, '页面出错');
+  showToast(`页面初始化失败: ${error.message}`, 'error');
+});

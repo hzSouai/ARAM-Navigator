@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LOL 大乱斗助手</title>
+    <link rel="icon" href="/favicon.ico?v=2" sizes="any" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="bg-glow"></div>
+
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">喵</div>
+        <div class="brand-text">
+          <h1>LOL 大乱斗助手</h1>
+          <p>备选席自动换人 · LCU 本地接口</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <span id="conn" class="pill offline">未连接</span>
+        <span id="phase" class="pill phase">等待选人</span>
+        <button id="pauseBtn" class="btn ghost">暂停自动</button>
+        <button id="settingsBtn" class="btn ghost small">⚙ 设置</button>
+        <button id="quitBtn" class="btn danger small" title="退出助手">退出</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="grid status-grid">
+        <article class="card hero-card">
+          <div class="card-title">
+            <span>当前英雄</span>
+            <span class="muted">手上</span>
+          </div>
+          <div class="hero-row">
+            <div id="heldIcon" class="champ-icon large placeholder">
+              <span class="fallback-letter">?</span>
+            </div>
+            <div class="hero-copy">
+              <div id="heldName" class="hero-name">未进入选人</div>
+              <div id="heldMeta" class="muted">等待客户端喵...</div>
+            </div>
+          </div>
+          <div class="timer-row">
+            <span class="muted" id="timerLabel">阶段剩余</span>
+            <strong id="timer">--</strong>
+          </div>
+        </article>
+
+        <article class="card bench-card">
+          <div class="card-title">
+            <span>备选席</span>
+            <span class="muted">点击英雄手动秒换 · 心愿英雄会高亮</span>
+          </div>
+          <div id="candidates" class="candidate-strip hidden"></div>
+          <div id="bench" class="bench-grid">
+            <div class="empty">等待备选席喵...</div>
+          </div>
+        </article>
+
+        <article class="card now-card">
+          <div class="card-title"><span>运行状态</span></div>
+          <dl class="kv">
+            <dt>连接</dt>
+            <dd id="connDetail">--</dd>
+            <dt>我的状态</dt>
+            <dd id="presenceDetail">--</dd>
+            <dt>客户端阶段</dt>
+            <dd id="flowDetail">--</dd>
+            <dt>房间</dt>
+            <dd id="lobbyDetail">--</dd>
+            <dt>模式</dt>
+            <dd id="modeDetail">--</dd>
+            <dt>队列 / 对局</dt>
+            <dd id="gameDetail">--</dd>
+            <dt>最近动作</dt>
+            <dd id="lastAction">--</dd>
+          </dl>
+        </article>
+      </section>
+
+      <section class="card friends-card">
+        <div class="card-title">
+          <span>好友房间</span>
+          <span class="muted">点「加入」直接进好友的房间喵</span>
+          <span class="friends-actions">
+            <button id="leaveLobbyBtn" class="btn ghost small hidden">离开房间</button>
+            <button id="refreshFriends" class="btn ghost small">刷新</button>
+          </span>
+        </div>
+        <div id="friends" class="friends-grid">
+          <div class="empty">正在读取好友列表喵...</div>
+        </div>
+      </section>
+
+      <section class="card log-card">
+        <div class="card-title">
+          <span>运行日志</span>
+          <span class="log-tools">
+            <label class="muted">
+              <input id="autoScroll" type="checkbox" checked />
+              自动滚动
+            </label>
+            <button id="clearLogs" class="btn ghost small">清空显示</button>
+          </span>
+        </div>
+        <div id="log" class="log"></div>
+      </section>
+
+      <footer class="foot">
+        仅监听 127.0.0.1 · 第三方工具，使用风险自负 · 喵
+      </footer>
+    </main>
+
+    <div id="settingsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <div class="modal-backdrop" data-close-settings></div>
+      <div class="modal-card">
+        <div class="modal-head">
+          <h2 id="settingsTitle">设置</h2>
+          <button type="button" class="icon-btn" data-close-settings title="关闭">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="settings-layout">
+            <section class="modal-section">
+              <div class="section-title">
+                <span>心愿英雄</span>
+                <span class="muted">越靠前越优先 · 最多 20 个 · 可拖动排序</span>
+              </div>
+              <div class="add-row">
+                <input
+                  id="search"
+                  type="text"
+                  placeholder="搜索英雄名或 ID 添加..."
+                  autocomplete="off"
+                />
+                <div id="searchResults" class="search-results hidden"></div>
+              </div>
+              <div id="wishlist" class="wishlist">
+                <div class="empty">还没有心愿英雄喵</div>
+              </div>
+            </section>
+
+            <section class="modal-section">
+              <div class="section-title"><span>参数</span></div>
+              <div class="settings-grid">
+                <label>
+                  启动延迟 (ms)
+                  <input id="startupDelayMs" type="number" min="0" step="100" />
+                </label>
+                <label>
+                  稳定轮询次数
+                  <input id="stablePolls" type="number" min="1" step="1" />
+                </label>
+                <label>
+                  最少剩余时间 (ms)
+                  <input id="minTimeLeftMs" type="number" min="0" step="100" />
+                </label>
+                <label>
+                  重试次数
+                  <input id="maxRetries" type="number" min="1" step="1" />
+                </label>
+                <label>
+                  自动接受延迟 (ms)
+                  <input id="acceptDelayMs" type="number" min="0" step="100" />
+                </label>
+                <label>
+                  自动返回延迟 (ms)
+                  <input id="playAgainDelayMs" type="number" min="0" step="100" />
+                </label>
+              </div>
+
+              <div class="settings-switches">
+                <label class="switch-row">
+                  <span>自动返回房间</span>
+                  <input id="autoPlayAgain" type="checkbox" class="switch" />
+                </label>
+                <label class="switch-row">
+                  <span>自动接受对局（准备）</span>
+                  <input id="autoAccept" type="checkbox" class="switch" />
+                </label>
+                <label class="switch-row">
+                  <span>待选界面出现心愿英雄自动选</span>
+                  <input id="autoSelectCandidate" type="checkbox" class="switch" />
+                </label>
+                <label class="switch-row">
+                  <span>海克斯爆发抢英雄（-1s 预发）</span>
+                  <input id="benchBurstMode" type="checkbox" class="switch" />
+                </label>
+                <label class="switch-row">
+                  <span>练习模式（只看不换）</span>
+                  <input id="dryRun" type="checkbox" class="switch" />
+                </label>
+              </div>
+            </section>
+          </div>
+
+          <div class="modal-actions">
+            <button id="saveSettings" class="btn">保存设置</button>
+            <button id="openLogsBtn" class="btn ghost">打开日志目录</button>
+            <button id="exportSessionBtn" class="btn ghost">导出当前会话</button>
+          </div>
+          <p class="hint">
+            心愿英雄改动会立即保存；参数改动点「保存设置」喵。默认等自己拿到初始英雄、
+            选人状态稳定后才出手，换完会回读确认喵。练习模式只演练换英雄，不会真正换人；
+            自动接受/自动返回仍按各自开关执行喵。
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+    <script src="/app.js"></script>
+  </body>
+</html>
