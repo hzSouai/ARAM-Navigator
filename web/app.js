@@ -87,6 +87,58 @@ function phaseLabel(phase) {
   return PHASE_LABELS[phase] || phase || '';
 }
 
+function showConfirm(message, options = {}) {
+  const modal = $('confirmModal');
+  if (!modal) return Promise.resolve(window.confirm(message));
+
+  const title = $('confirmTitle');
+  const messageEl = $('confirmMessage');
+  const okBtn = $('confirmOk');
+  const cancelBtn = $('confirmCancel');
+  title.textContent = options.title || '确认';
+  messageEl.textContent = message;
+  okBtn.textContent = options.okText || '确定';
+  cancelBtn.textContent = options.cancelText || '取消';
+  modal.classList.remove('hidden');
+  document.body.classList.add('modal-open');
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const cleanup = (value) => {
+      if (settled) return;
+      settled = true;
+      modal.classList.add('hidden');
+      document.body.classList.remove('modal-open');
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      modal.querySelectorAll('[data-close-confirm]').forEach((element) => {
+        element.removeEventListener('click', onCancel);
+      });
+      document.removeEventListener('keydown', onKey);
+      resolve(value);
+    };
+    const onOk = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    const onKey = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        cleanup(false);
+      } else if (event.key === 'Enter') {
+        event.preventDefault();
+        cleanup(true);
+      }
+    };
+
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    modal.querySelectorAll('[data-close-confirm]').forEach((element) => {
+      element.addEventListener('click', onCancel);
+    });
+    document.addEventListener('keydown', onKey);
+    okBtn.focus();
+  });
+}
+
 function showToast(message, kind = 'info') {
   const toast = $('toast');
   toast.textContent = message;
@@ -726,7 +778,14 @@ async function createLobby() {
 }
 
 async function findMatch() {
-  if (!confirm('确认开始寻找海克斯大乱斗对局喵？整个房间会进入匹配。')) return;
+  if (
+    !(await showConfirm(
+      '确认开始寻找海克斯大乱斗对局喵？整个房间会进入匹配。',
+      { title: '寻找对局', okText: '开始匹配' },
+    ))
+  ) {
+    return;
+  }
   try {
     showToast('正在开始寻找对局喵...');
     const result = await postJson('/api/find-match', {});
@@ -989,7 +1048,14 @@ function bindEvents() {
   }
 
   $('leaveLobbyBtn').addEventListener('click', async () => {
-    if (!confirm('确认离开当前房间喵？如果你是房主，队伍可能会解散。')) return;
+    if (
+      !(await showConfirm(
+        '确认离开当前房间喵？如果你是房主，队伍可能会解散。',
+        { title: '离开房间', okText: '离开' },
+      ))
+    ) {
+      return;
+    }
     const result = await postJson('/api/leave-lobby', {});
     if (result.ok) showToast('已离开房间喵');
     else showToast(result.data?.message || '离开失败', 'error');
@@ -1094,7 +1160,14 @@ function bindEvents() {
   });
 
   $('quitBtn').addEventListener('click', async () => {
-    if (!confirm('确认退出助手喵？退出后自动换人会停止。')) return;
+    if (
+      !(await showConfirm('确认退出助手喵？退出后自动换人会停止。', {
+        title: '退出助手',
+        okText: '退出',
+      }))
+    ) {
+      return;
+    }
     await postJson('/api/shutdown', {});
     closeSettings();
     setConnection(false, '已退出');

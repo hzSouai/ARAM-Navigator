@@ -1509,6 +1509,27 @@ body.modal-open {
   overflow: hidden;
 }
 
+.confirm-modal {
+  z-index: 120;
+}
+
+.confirm-card {
+  width: min(440px, 100%);
+}
+
+.confirm-message {
+  margin: 0 0 18px;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .toast {
   position: fixed;
   bottom: 28px;
