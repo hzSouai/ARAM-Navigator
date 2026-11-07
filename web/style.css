@@ -890,6 +890,30 @@ body {
   pointer-events: none;
 }
 
+.bench-item.pending {
+  border-color: rgba(10, 200, 185, 0.7);
+  background: rgba(10, 200, 185, 0.08);
+  box-shadow: 0 0 18px rgba(10, 200, 185, 0.18);
+}
+
+.pending-badge {
+  position: absolute;
+  top: 4px;
+  left: 5px;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--teal);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  color: #04121a;
+  font-size: 9px;
+  font-weight: 800;
+  pointer-events: none;
+}
+
 .bench-item:hover {
   transform: translateY(-1px);
   border-color: rgba(10, 200, 185, 0.3);

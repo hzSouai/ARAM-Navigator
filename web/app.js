@@ -193,13 +193,19 @@ function renderStatus(s) {
     const wishRanks = new Map(
       (s.wishlist || []).map((item, index) => [item.id, index + 1]),
     );
+    const pendingId = Number(s.pendingSwap?.id) || 0;
     $('bench').innerHTML = s.bench
       .map((champion) => {
         const rank = wishRanks.get(champion.id);
-        const title = `点击换到 ${champion.name}${rank ? ` · 心愿英雄优先级 #${rank}` : ''}`;
-        return `<button class="bench-item${rank ? ' wish' : ''}" data-champ="${champion.id}"
-            title="${esc(title)}">
+        const pending = champion.id === pendingId;
+        const title = pending
+          ? `已预约 ${champion.name}，等 FINALIZATION 自动尝试`
+          : `点击换到 ${champion.name}${rank ? ` · 心愿英雄优先级 #${rank}` : ''}`;
+        return `<button class="bench-item${rank ? ' wish' : ''}${
+          pending ? ' pending' : ''
+        }" data-champ="${champion.id}" title="${esc(title)}">
             ${rank ? `<span class="wish-badge">#${rank}</span>` : ''}
+            ${pending ? '<span class="pending-badge">预约</span>' : ''}
             ${champIcon(champion.id, champion.name)}
             <span>${esc(champion.name)}</span>
           </button>`;
@@ -831,12 +837,14 @@ async function manualSwap(id) {
   try {
     const result = await postJson('/api/swap', { championId: id });
     if (result.ok) {
-      showToast(`已确认换到 ${nameOf(id)} 喵`);
+      showToast(result.data?.message || `已确认换到 ${nameOf(id)} 喵`);
     } else {
       showToast(result.data?.message || '换人没有落地喵', 'error');
     }
+    refreshStatus();
   } catch (error) {
     showToast(`换人失败: ${error.message}`, 'error');
+    refreshStatus();
   }
 }
 

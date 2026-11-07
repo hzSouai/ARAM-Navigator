@@ -122,6 +122,8 @@ function freshState() {
     burstPosts: 0,
     burstEndLogged: false,
     burstDone: false,
+    pendingDoneLogged: false,
+    pendingExhaustedLogged: false,
   };
 }
 
@@ -157,6 +159,7 @@ const runtime = {
   gameflowPhase: null,
   lastGameflowAt: 0,
   hextechQueueId: 2400,
+  pendingManualSwap: null,
   inLobby: false,
   lobby: null,
   presence: null,
@@ -567,6 +570,12 @@ function buildStatus() {
     wishlist: (config.wishlist || []).map(champRef),
     queueId: session?.queueId ?? null,
     hextechQueueId: runtime.hextechQueueId || 2400,
+    pendingSwap: runtime.pendingManualSwap
+      ? {
+          ...champRef(runtime.pendingManualSwap.championId),
+          gameId: runtime.pendingManualSwap.gameId,
+        }
+      : null,
     gameId: session?.gameId ?? null,
     timeLeft: info?.timeLeft ?? null,
     isInfinite: info?.isInfinite ?? false,
@@ -1336,12 +1345,110 @@ async function manualSwap(championId) {
   if (!runtime.lastSession) return { ok: false, message: '当前不在选人阶段' };
   const info = sessionInfo(runtime.lastSession);
   const hextechQueueId = runtime.hextechQueueId || DEFAULT_HEXTECH_QUEUE_ID;
-  if (runtime.lastSession.queueId === hextechQueueId && info.phase !== 'FINALIZATION') {
-    return { ok: false, message: '海克斯大乱斗要等所有人选完才能换备选席喵' };
-  }
   if (!info.bench.includes(id)) return { ok: false, message: '这个英雄不在备选席' };
   if (info.held === id) return { ok: false, message: '已经在这个英雄上' };
+
+  if (runtime.lastSession.queueId === hextechQueueId) {
+    const state = runtime.state;
+    state.attempts.delete(id);
+    state.exhausted.delete(id);
+    state.pendingDoneLogged = false;
+    state.pendingExhaustedLogged = false;
+    runtime.pendingManualSwap = {
+      gameId: runtime.lastSession.gameId,
+      championId: id,
+      at: Date.now(),
+    };
+    log(`[QUEUE] 已预约换到 ${nameOf(id)}，进入 FINALIZATION 后自动尝试`);
+    runtime.lastAction = {
+      type: 'queue',
+      target: champRef(id),
+      manual: true,
+      ok: true,
+      at: Date.now(),
+      message: `已预约换到 ${nameOf(id)}`,
+    };
+    publishStatus(true);
+
+    if (info.phase !== 'FINALIZATION') {
+      return {
+        ok: true,
+        queued: true,
+        message: `已预约换到 ${nameOf(id)}，等 FINALIZATION 自动尝试喵`,
+      };
+    }
+
+    state.attempts.set(id, 1);
+    state.lastAttemptAt = Date.now();
+    state.swaps += 1;
+    return attemptSwap(runtime.client, id, 1, runtime, { manual: true });
+  }
+
   return attemptSwap(runtime.client, id, 1, runtime, { manual: true });
+}
+
+async function handlePendingSwap(client, session, info, runtime2, state) {
+  const pending = runtime2.pendingManualSwap;
+  if (!pending) return false;
+  if (Number(pending.gameId) !== Number(session.gameId)) {
+    runtime2.pendingManualSwap = null;
+    return false;
+  }
+
+  const config = runtime2.config;
+  const target = Number(pending.championId);
+  if (!Number.isInteger(target) || target <= 0) {
+    runtime2.pendingManualSwap = null;
+    return false;
+  }
+
+  if (info.held === target) {
+    if (!state.pendingDoneLogged) {
+      log(`[OK] 已换到预约英雄 ${nameOf(target)}喵`);
+      state.pendingDoneLogged = true;
+    }
+    // Keep the pending marker as a manual lock so the wishlist automation
+    // does not immediately swap the champion away again.
+    return true;
+  }
+
+  if (!info.bench.includes(target)) {
+    log(`[WARN] 预约的 ${nameOf(target)} 已不在备选席，取消预约喵`);
+    runtime2.pendingManualSwap = null;
+    publishStatus(true);
+    return false;
+  }
+
+  // Before FINALIZATION the bench is locked; wait without running the
+  // automatic wishlist/burst logic, which would override the manual choice.
+  if (info.phase !== 'FINALIZATION' || !info.benchEnabled) return true;
+
+  if (state.swaps >= config.maxSwapsPerGame) {
+    if (!state.pendingExhaustedLogged) {
+      log('[WARN] 本局换人请求次数达到上限，预约已暂停喵');
+      state.pendingExhaustedLogged = true;
+    }
+    return true;
+  }
+
+  const tries = state.attempts.get(target) || 0;
+  if (tries >= config.maxRetries) {
+    if (!state.pendingExhaustedLogged) {
+      log(
+        `[WARN] 预约的 ${nameOf(target)} 试了 ${tries} 次仍未成功，暂停自动尝试喵`,
+      );
+      state.pendingExhaustedLogged = true;
+    }
+    return true;
+  }
+
+  if (Date.now() - state.lastAttemptAt < config.retryDelayMs) return true;
+
+  state.attempts.set(target, tries + 1);
+  state.lastAttemptAt = Date.now();
+  state.swaps += 1;
+  await attemptSwap(client, target, tries + 1, runtime2, { manual: true });
+  return true;
 }
 
 /**
@@ -1515,6 +1622,7 @@ async function handleSession(client, session, runtime2, state) {
     state.seenAt = Date.now();
     runtime2.clientCards = [];
     runtime2.clientCardsAt = 0;
+    runtime2.pendingManualSwap = null;
     log(
       `进入选人: gameId=${session.gameId ?? '?'} queue=${session.queueId ?? '?'} phase=${info.phase}`,
     );
@@ -1567,6 +1675,10 @@ async function handleSession(client, session, runtime2, state) {
         .map((id) => nameOf(id))
         .join(' / ')} 已从备选席消失（可能被队友拿走），停止重试`,
     );
+  }
+
+  if (await handlePendingSwap(client, session, info, runtime2, state)) {
+    return;
   }
 
   if (session.queueId === hextechQueueId && config.benchBurstMode) {
@@ -1668,6 +1780,7 @@ async function runLoop(initialClient, runtime2) {
       runtime2.client = client;
       if (!session) {
         runtime2.lastSession = null;
+        runtime2.pendingManualSwap = null;
         resetState(state);
         publishStatus();
         if (Date.now() - lastIdleLogAt > 30000) {
