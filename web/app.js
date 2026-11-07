@@ -54,13 +54,21 @@ function tradeStateInfo(state) {
     case 'ACCEPTED':
       return { key: 'accepted', label: '已接受' };
     case 'INVALID':
-      return { key: 'invalid', label: '不可交换' };
+      return {
+        key: 'invalid',
+        label: '不可交换',
+        hint: '客户端判定当前不可交换，可能是队友未拥有该英雄或阶段限制',
+      };
     case 'DECLINED':
     case 'CANCELLED':
     case 'CANCELED':
       return { key: 'idle', label: '已取消' };
     default:
-      return { key: 'idle', label: '空闲' };
+      return {
+        key: 'idle',
+        label: '无交易',
+        hint: '当前没有可用的交换请求',
+      };
   }
 }
 
@@ -378,7 +386,9 @@ function renderStatus(s) {
         const championName = mate.champion?.id
           ? mate.champion.name
           : '未选英雄';
-        const title = `召唤师ID ${mate.summonerId || '?'} · ${championName} · ${info.label}`;
+        const title = `召唤师ID ${mate.summonerId || '?'} · ${championName} · ${
+          info.label
+        }${info.hint ? ` · ${info.hint}` : ''}`;
         return `<${tag} class="teammate-card ${info.key}" ${attrs}
             title="${esc(title)}">
             ${champIcon(mate.champion?.id, championName)}
