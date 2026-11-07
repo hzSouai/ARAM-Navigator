@@ -862,8 +862,10 @@ async function manualTrade(tradeId) {
     } else {
       showToast(result.data?.message || '接受交易失败喵', 'error');
     }
+    refreshStatus();
   } catch (error) {
     showToast(`接受交易失败: ${error.message}`, 'error');
+    refreshStatus();
   }
 }
 

@@ -1241,26 +1241,61 @@ async function acceptTrade(tradeId) {
   if (!Number.isInteger(id) || id <= 0) {
     return { ok: false, message: '交易 ID 不正确喵' };
   }
-  const trade = (runtime.lastSession?.trades || []).find(
+
+  // Re-read the session before accepting. The cached session can be stale
+  // during the BAN_PICK -> FINALIZATION transition, which used to produce a
+  // misleading "HTTP 404 Invalid URI format" from the client.
+  let session;
+  try {
+    session = await getChampSelectSession(runtime.client);
+  } catch (error) {
+    log(`[WARN] 接受交易前读取会话失败: ${error.message}`);
+    return { ok: false, message: '客户端正在切换阶段，请稍后重试喵' };
+  }
+  if (!session) return { ok: false, message: '当前不在选人阶段喵' };
+
+  const trade = (session.trades || []).find(
     (entry) => Number(entry.id) === id,
   );
-  if (!trade) return { ok: false, message: '这条交易已经不存在了喵' };
+  if (!trade) return { ok: false, message: '交易已结束或队友已取消喵' };
   if (String(trade.state || '').toUpperCase() !== 'AVAILABLE') {
     return { ok: false, message: `交易状态是 ${trade.state}喵` };
   }
-  const teammate = (runtime.lastSession?.myTeam || []).find(
+  const teammate = (session.myTeam || []).find(
     (player) => player.cellId === trade.cellId,
   );
   const target = champRef(Number(teammate?.championId) || 0);
+  const endpoint = `/lol-champ-select/v1/session/trades/${encodeURIComponent(
+    String(id),
+  )}/accept`;
 
   try {
-    const res = await request(
-      runtime.client,
-      'POST',
-      `/lol-champ-select/v1/session/trades/${id}/accept`,
-      {},
-    );
+    log(`[TRADE] 接受交易 id=${id} cell=${trade.cellId} target=${target.name}`);
+    let res = await request(runtime.client, 'POST', endpoint, {});
+    // A transition can briefly reject the request; retry once if the trade
+    // still exists in the fresh session.
+    if (res.status === 404 || res.status === 405) {
+      log(`[TRADE] id=${id} HTTP ${res.status}，250ms 后重试一次`);
+      await sleep(250);
+      try {
+        const again = await getChampSelectSession(runtime.client);
+        if (
+          again &&
+          (again.trades || []).some(
+            (entry) =>
+              Number(entry.id) === id &&
+              String(entry.state || '').toUpperCase() === 'AVAILABLE',
+          )
+        ) {
+          res = await request(runtime.client, 'POST', endpoint, {});
+        }
+      } catch {
+        // Keep the original response.
+      }
+    }
+
     if (res.status >= 200 && res.status < 300) {
+      runtime.lastSession = session;
       log(`[OK] 已接受换英雄交易：${target.name}喵`);
       runtime.lastAction = {
         type: 'trade',
@@ -1280,7 +1315,11 @@ async function acceptTrade(tradeId) {
     } catch {
       detail = res.body.slice(0, 200);
     }
-    log(`[WARN] 接受交易失败: HTTP ${res.status}${detail ? ` ${detail}` : ''}`);
+    log(
+      `[WARN] 接受交易失败 id=${id}: HTTP ${res.status}${
+        detail ? ` ${detail}` : ''
+      }`,
+    );
     return {
       ok: false,
       message: `接受交易失败: HTTP ${res.status}${detail ? ` ${detail}` : ''}`,
