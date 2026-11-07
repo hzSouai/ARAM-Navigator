@@ -567,6 +567,42 @@ function buildStatus() {
           cellId: trade.cellId,
         }))
       : [],
+    teammates: session
+      ? (session.myTeam || [])
+          .filter(
+            (player) =>
+              Number(player.cellId) !== Number(session.localPlayerCellId),
+          )
+          .map((player) => {
+            const trade = (session.trades || []).find(
+              (entry) => Number(entry.cellId) === Number(player.cellId),
+            );
+            const summonerId = Number(player.summonerId) || 0;
+            let name;
+            if (
+              player.nameVisibilityType &&
+              player.nameVisibilityType !== 'VISIBLE'
+            ) {
+              name = summonerId ? `召唤师 ${summonerId}` : '隐藏玩家';
+            } else if (player.gameName) {
+              name = `${player.gameName}${
+                player.tagLine ? `#${player.tagLine}` : ''
+              }`;
+            } else {
+              name = summonerId ? String(summonerId) : '机器人';
+            }
+            return {
+              cellId: Number(player.cellId),
+              summonerId,
+              name,
+              champion: champRef(player.championId),
+              tradeId: trade ? Number(trade.id) || 0 : 0,
+              tradeState: trade
+                ? String(trade.state || 'NONE').toUpperCase()
+                : 'NONE',
+            };
+          })
+      : [],
     wishlist: (config.wishlist || []).map(champRef),
     queueId: session?.queueId ?? null,
     hextechQueueId: runtime.hextechQueueId || 2400,

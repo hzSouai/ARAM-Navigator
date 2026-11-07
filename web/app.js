@@ -42,6 +42,28 @@ function champIcon(id, name, size = '') {
   </span>`;
 }
 
+function tradeStateInfo(state) {
+  switch (String(state || '').toUpperCase()) {
+    case 'AVAILABLE':
+      return { key: 'available', label: '可交换' };
+    case 'BUSY':
+      return { key: 'busy', label: '交换中' };
+    case 'SENT':
+    case 'REQUESTED':
+      return { key: 'busy', label: '已请求' };
+    case 'ACCEPTED':
+      return { key: 'accepted', label: '已接受' };
+    case 'INVALID':
+      return { key: 'invalid', label: '不可交换' };
+    case 'DECLINED':
+    case 'CANCELLED':
+    case 'CANCELED':
+      return { key: 'idle', label: '已取消' };
+    default:
+      return { key: 'idle', label: '空闲' };
+  }
+}
+
 function nameOf(id) {
   const number = Number(id);
   const statusHit =
@@ -322,10 +344,7 @@ function renderStatus(s) {
   const extraCandidates = (s.candidates || []).filter(
     (champion) => !benchIds.has(champion.id) && champion.id !== s.held?.id,
   );
-  const tradeCandidates = (s.trades || []).filter(
-    (trade) => !benchIds.has(trade.id) && trade.id !== s.held?.id,
-  );
-  if (extraCandidates.length || tradeCandidates.length) {
+  if (extraCandidates.length) {
     $('candidates').classList.remove('hidden');
     $('candidates').innerHTML =
       '<span class="candidate-label">待选</span>' +
@@ -337,20 +356,54 @@ function renderStatus(s) {
               <span>${esc(champion.name)}</span>
             </button>`,
         )
-        .join('') +
-      tradeCandidates
-        .map(
-          (trade) => `<button class="candidate-chip" data-trade="${trade.tradeId}"
-              title="接受 ${esc(trade.name)} 的队友交易">
-              ${champIcon(trade.id, trade.name)}
-              <span>${esc(trade.name)}</span>
-              <span class="muted">队友交易</span>
-            </button>`,
-        )
         .join('');
   } else {
     $('candidates').classList.add('hidden');
     $('candidates').innerHTML = '';
+  }
+
+  const teammates = Array.isArray(s.teammates) ? s.teammates : [];
+  if (s.phase && teammates.length) {
+    const counts = {};
+    const cards = teammates
+      .map((mate) => {
+        const info = tradeStateInfo(mate.tradeState);
+        counts[info.key] = (counts[info.key] || 0) + 1;
+        const clickable =
+          mate.tradeState === 'AVAILABLE' && Number(mate.tradeId) > 0;
+        const tag = clickable ? 'button' : 'div';
+        const attrs = clickable
+          ? `type="button" data-trade="${Number(mate.tradeId)}"`
+          : '';
+        const championName = mate.champion?.id
+          ? mate.champion.name
+          : '未选英雄';
+        const title = `召唤师ID ${mate.summonerId || '?'} · ${championName} · ${info.label}`;
+        return `<${tag} class="teammate-card ${info.key}" ${attrs}
+            title="${esc(title)}">
+            ${champIcon(mate.champion?.id, championName)}
+            <span class="teammate-info">
+              <span class="teammate-name">${esc(mate.name)}</span>
+              <span class="teammate-champ">${esc(championName)}</span>
+            </span>
+            <span class="trade-state ${info.key}">${info.label}</span>
+          </${tag}>`;
+      })
+      .join('');
+    const summary = [];
+    if (counts.available) summary.push(`可交换 ${counts.available}`);
+    if (counts.accepted) summary.push(`已接受 ${counts.accepted}`);
+    if (counts.busy) summary.push(`交换中 ${counts.busy}`);
+    if (counts.invalid) summary.push(`不可交换 ${counts.invalid}`);
+    if (!summary.length) summary.push('暂无进行中的交易');
+    $('teammates').innerHTML =
+      '<span class="teammate-strip-label">队友</span>' +
+      cards +
+      `<span class="teammate-summary">${esc(summary.join(' · '))}</span>`;
+    $('teammates').classList.remove('hidden');
+  } else {
+    $('teammates').classList.add('hidden');
+    $('teammates').innerHTML = '';
   }
 
   $('connDetail').textContent = s.client
@@ -1083,6 +1136,12 @@ function bindEvents() {
     const button = event.target.closest('[data-champ]');
     if (!button) return;
     manualSwap(Number(button.dataset.champ));
+  });
+
+  $('teammates').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-trade]');
+    if (!button) return;
+    manualTrade(Number(button.dataset.trade));
   });
 
   $('clientCards').addEventListener('click', (event) => {
