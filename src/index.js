@@ -1274,13 +1274,24 @@ async function acceptTrade(tradeId) {
     (player) => player.cellId === trade.cellId,
   );
   const target = champRef(Number(teammate?.championId) || 0);
-  const endpoint = `/lol-champ-select/v1/session/trades/${encodeURIComponent(
-    String(id),
-  )}/accept`;
+  const swapId = encodeURIComponent(String(id));
+  // Current clients expose champion swaps as /session/champion-swaps/{id}/accept.
+  // Older clients used /session/trades/{id}/accept; keep it as a fallback.
+  const primaryEndpoint = `/lol-champ-select/v1/session/champion-swaps/${swapId}/accept`;
+  const legacyEndpoint = `/lol-champ-select/v1/session/trades/${swapId}/accept`;
+
+  const postAccept = async () => {
+    let response = await request(runtime.client, 'POST', primaryEndpoint, {});
+    if (response.status === 404) {
+      log(`[TRADE] id=${id} champion-swaps 返回 404，尝试旧 trades 接口`);
+      response = await request(runtime.client, 'POST', legacyEndpoint, {});
+    }
+    return response;
+  };
 
   try {
     log(`[TRADE] 接受交易 id=${id} cell=${trade.cellId} target=${target.name}`);
-    let res = await request(runtime.client, 'POST', endpoint, {});
+    let res = await postAccept();
     // A transition can briefly reject the request; retry once if the trade
     // still exists in the fresh session.
     if (res.status === 404 || res.status === 405) {
@@ -1296,7 +1307,7 @@ async function acceptTrade(tradeId) {
               String(entry.state || '').toUpperCase() === 'AVAILABLE',
           )
         ) {
-          res = await request(runtime.client, 'POST', endpoint, {});
+          res = await postAccept();
         }
       } catch {
         // Keep the original response.
