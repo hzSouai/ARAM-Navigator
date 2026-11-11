@@ -7,6 +7,7 @@ const { requestBuffer } = require('./lcu');
 
 const WEB_ROOT = path.resolve(__dirname, '..', 'web');
 const ICON_CACHE = new Map();
+const SPELL_ICON_CACHE = new Map();
 
 const STATIC_FILES = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
@@ -290,6 +291,66 @@ async function championIcon(res, runtime, id) {
   res.end(result.body);
 }
 
+async function spellIcon(res, runtime, id) {
+  if (!Number.isInteger(id) || id <= 0) {
+    sendText(res, 400, 'bad spell id');
+    return;
+  }
+
+  const cached = SPELL_ICON_CACHE.get(id);
+  if (cached) {
+    res.writeHead(200, {
+      'Content-Type': cached.type,
+      'Cache-Control': 'public, max-age=86400',
+      'Content-Length': cached.body.length,
+    });
+    res.end(cached.body);
+    return;
+  }
+
+  if (!runtime.client) {
+    sendText(res, 404, 'client not connected');
+    return;
+  }
+
+  const catalogIcon = runtime.spellIcons?.get(id);
+  const iconPath =
+    catalogIcon && catalogIcon.startsWith('/lol-game-data/')
+      ? catalogIcon
+      : catalogIcon && catalogIcon.startsWith('/')
+        ? `/lol-game-data${catalogIcon}`
+        : `/lol-game-data/assets/v1/summoner-spell-icons/${id}.png`;
+
+  let result;
+  try {
+    result = await requestBuffer(runtime.client, iconPath);
+  } catch {
+    sendText(res, 404, 'icon unavailable');
+    return;
+  }
+
+  if (result.status !== 200 || result.body.length === 0) {
+    sendText(res, 404, 'icon unavailable');
+    return;
+  }
+  if (result.contentType.includes('json')) {
+    sendText(res, 404, 'icon unavailable');
+    return;
+  }
+
+  SPELL_ICON_CACHE.set(id, { body: result.body, type: result.contentType });
+  if (SPELL_ICON_CACHE.size > 100) {
+    SPELL_ICON_CACHE.delete(SPELL_ICON_CACHE.keys().next().value);
+  }
+
+  res.writeHead(200, {
+    'Content-Type': result.contentType,
+    'Cache-Control': 'public, max-age=86400',
+    'Content-Length': result.body.length,
+  });
+  res.end(result.body);
+}
+
 async function handleRequest(req, res, runtime, log) {
   const url = new URL(req.url, 'http://127.0.0.1');
   const pathname = url.pathname;
@@ -499,6 +560,12 @@ async function handleRequest(req, res, runtime, log) {
   const iconMatch = /^\/api\/champion-icon\/(\d+)$/.exec(pathname);
   if (iconMatch && req.method === 'GET') {
     await championIcon(res, runtime, Number(iconMatch[1]));
+    return;
+  }
+
+  const spellIconMatch = /^\/api\/spell-icon\/(\d+)$/.exec(pathname);
+  if (spellIconMatch && req.method === 'GET') {
+    await spellIcon(res, runtime, Number(spellIconMatch[1]));
     return;
   }
 

@@ -247,6 +247,25 @@ function renderStatus(s) {
     $('heldMeta').textContent = s.connected ? '等待进入大乱斗选人喵...' : '等待客户端喵...';
   }
 
+  const spells = (Array.isArray(s.spells) ? s.spells : []).filter(
+    (spell) => spell && spell.id,
+  );
+  if (spells.length) {
+    $('spellIcons').innerHTML = spells
+      .map(
+        (spell) => `<span class="spell-icon" title="${esc(spell.name)}">
+          <img src="/api/spell-icon/${spell.id}" alt="" loading="lazy"
+            onerror="this.style.display='none';this.parentElement.classList.add('fallback')">
+          <span class="spell-fallback">${esc(firstChar(spell.name))}</span>
+        </span>`,
+      )
+      .join('');
+    $('spellBlock').classList.remove('hidden');
+  } else {
+    $('spellBlock').classList.add('hidden');
+    $('spellIcons').innerHTML = '';
+  }
+
   const timeLeft = s.timeLeft;
   const hextechQueueId = Number(s.hextechQueueId) || 2400;
   if (s.queueId === hextechQueueId && s.phase === 'BAN_PICK') {

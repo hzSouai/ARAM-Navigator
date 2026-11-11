@@ -47,6 +47,20 @@ const FALLBACK_CHAMPION_NAMES = Object.fromEntries(
   FALLBACK_CHAMPIONS.map(([id, name]) => [id, name]),
 );
 
+const FALLBACK_SPELL_NAMES = {
+  1: '净化',
+  3: '虚弱',
+  4: '闪现',
+  6: '疾跑',
+  7: '治疗',
+  11: '惩戒',
+  12: '传送',
+  13: '清晰术',
+  14: '引燃',
+  21: '屏障',
+  32: '标记',
+};
+
 function fallbackChampionCatalog() {
   return FALLBACK_CHAMPIONS.map(([id, name, alias]) => ({
     id,
@@ -138,6 +152,8 @@ const runtime = {
   client: null,
   catalog: [],
   names: new Map(),
+  spellNames: new Map(),
+  spellIcons: new Map(),
   state: freshState(),
   lastSession: null,
   status: null,
@@ -543,9 +559,65 @@ async function refreshChampionCatalog(client, runtime2) {
   log(`客户端英雄名映射: ${catalog.length} 个`);
 }
 
+async function refreshSummonerSpellCatalog(client, runtime2) {
+  try {
+    const res = await request(
+      client,
+      'GET',
+      '/lol-game-data/assets/v1/summoner-spells.json',
+    );
+    if (res.status !== 200 || !res.body.trim()) {
+      log(`[WARN] 召唤师技能列表不可用: HTTP ${res.status}`);
+      return;
+    }
+    const parsed = JSON.parse(res.body);
+    const entries = Array.isArray(parsed)
+      ? parsed
+      : Object.values(parsed && typeof parsed === 'object' ? parsed : {});
+    const names = new Map();
+    const icons = new Map();
+    for (const entry of entries) {
+      const id = Number(entry?.id ?? entry?.spellId);
+      const name = String(entry?.name || entry?.displayName || '').trim();
+      const icon = String(entry?.iconPath || entry?.icon || '').trim();
+      if (Number.isInteger(id) && id > 0) {
+        if (name) names.set(id, name);
+        if (icon) icons.set(id, icon);
+      }
+    }
+    if (names.size) {
+      runtime2.spellNames = names;
+      runtime2.spellIcons = icons;
+      log(`召唤师技能名称: ${names.size} 个`);
+      log(
+        `召唤师技能图标示例: ${entries
+          .slice(0, 3)
+          .map(
+            (entry) =>
+              `${entry?.id}:${entry?.iconPath || entry?.icon || '?'}`,
+          )
+          .join(' | ')}`,
+      );
+    }
+  } catch (error) {
+    log(`[WARN] 读取召唤师技能列表失败: ${error.message}`);
+  }
+}
+
 function champRef(id) {
   const number = Number(id);
   return { id: number, name: nameOf(number) };
+}
+
+function spellRef(id) {
+  const number = Number(id) || 0;
+  return {
+    id: number,
+    name:
+      runtime.spellNames.get(number) ||
+      FALLBACK_SPELL_NAMES[number] ||
+      `技能 ${number}`,
+  };
 }
 
 function displayedTimeLeft(session, info) {
@@ -583,6 +655,17 @@ function buildStatus() {
           tradeId: trade.tradeId,
           cellId: trade.cellId,
         }))
+      : [],
+    spells: session
+      ? (() => {
+          const me = (session.myTeam || []).find(
+            (player) =>
+              Number(player.cellId) === Number(session.localPlayerCellId),
+          );
+          return [me?.spell1Id, me?.spell2Id]
+            .map(spellRef)
+            .filter((spell) => spell.id > 0);
+        })()
       : [],
     teammates: session
       ? (session.myTeam || [])
@@ -2021,6 +2104,7 @@ async function supervisor(runtime2) {
       const client = await discoverClient(runtime2.config, log);
       runtime2.client = client;
       await refreshChampionCatalog(client, runtime2);
+      await refreshSummonerSpellCatalog(client, runtime2);
       await resolveHextechQueueId(client, runtime2);
       if (!runtime2.warnedAboutWiner && isWinerRunning() && winerBenchAutoEnabled()) {
         runtime2.warnedAboutWiner = true;
@@ -2102,6 +2186,7 @@ async function main() {
     const client = await discoverClient(config, log);
     runtime.client = client;
     await refreshChampionCatalog(client, runtime);
+    await refreshSummonerSpellCatalog(client, runtime);
     await resolveHextechQueueId(client, runtime);
     if (hasFlag('--list-champions')) {
       for (const entry of runtime.catalog) {

@@ -338,6 +338,56 @@ body {
   font-size: 28px;
 }
 
+.spell-block {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.spell-label {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.spell-icons {
+  display: flex;
+  gap: 8px;
+}
+
+.spell-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  overflow: hidden;
+  border: 1px solid rgba(200, 170, 110, 0.18);
+  border-radius: 12px;
+  background: #0a1822;
+}
+
+.spell-icon img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.spell-fallback {
+  display: none;
+  color: var(--gold);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.spell-icon.fallback .spell-fallback {
+  display: block;
+}
+
 .timer-block {
   display: flex;
   flex: none;
