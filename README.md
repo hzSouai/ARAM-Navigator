@@ -108,6 +108,8 @@ Node.js 20+。
 
 - 海克斯大乱斗的 `BAN_PICK` 总时长约 15 秒，`FINALIZATION` 约 30 秒；
 - 网页在 `BAN_PICK` 显示「距可换人约 X 秒」，在 `FINALIZATION` 显示「可换人剩余 X 秒」；
+- 客户端在 FINALIZATION 末尾或三选一阶段可能短暂冻结 `adjustedTimeLeftInPhase`；
+  网页检测到同一个剩余值持续不变时，会按本地经过时间平滑倒计时，LCU 更新后重新对齐；
 - 开启「海克斯爆发抢英雄」后，在阶段结束前约 1 秒开始预发请求；进入 `FINALIZATION`
   后的前 3 秒约每 300 ms 尝试一次，3 至 5 秒放缓到约每 800 ms 一次，5 秒后停止；
 - 关闭爆发模式后，使用「进入 `FINALIZATION` 后首次轮询出手 + 12 次重试」的普通策略。

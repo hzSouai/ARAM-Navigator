@@ -160,6 +160,7 @@ const runtime = {
   lastGameflowAt: 0,
   hextechQueueId: 2400,
   pendingManualSwap: null,
+  timerAnchor: null,
   inLobby: false,
   lobby: null,
   presence: null,
@@ -547,6 +548,22 @@ function champRef(id) {
   return { id: number, name: nameOf(number) };
 }
 
+function displayedTimeLeft(session, info) {
+  if (!info || info.timeLeft === null || !Number.isFinite(info.timeLeft)) {
+    return null;
+  }
+  const anchor = runtime.timerAnchor;
+  if (
+    !anchor ||
+    !session ||
+    anchor.gameId !== session.gameId ||
+    anchor.phase !== info.phase
+  ) {
+    return info.timeLeft;
+  }
+  return Math.max(0, anchor.lcuTimeLeft - (Date.now() - anchor.at));
+}
+
 function buildStatus() {
   const session = runtime.lastSession;
   const info = session ? sessionInfo(session) : null;
@@ -613,7 +630,7 @@ function buildStatus() {
         }
       : null,
     gameId: session?.gameId ?? null,
-    timeLeft: info?.timeLeft ?? null,
+    timeLeft: displayedTimeLeft(session, info),
     isInfinite: info?.isInfinite ?? false,
     lastAction: runtime.lastAction,
     clientCards: runtime.clientCards || [],
@@ -1774,6 +1791,29 @@ async function handleSession(client, session, runtime2, state) {
   const config = runtime2.config;
   const hextechQueueId = runtime2.hextechQueueId || DEFAULT_HEXTECH_QUEUE_ID;
   const info = sessionInfo(session);
+  if (
+    !info ||
+    info.isInfinite ||
+    info.timeLeft === null ||
+    !Number.isFinite(info.timeLeft)
+  ) {
+    runtime2.timerAnchor = null;
+  } else {
+    const anchor = runtime2.timerAnchor;
+    if (
+      !anchor ||
+      anchor.gameId !== session.gameId ||
+      anchor.phase !== info.phase ||
+      anchor.lcuTimeLeft !== info.timeLeft
+    ) {
+      runtime2.timerAnchor = {
+        gameId: session.gameId,
+        phase: info.phase,
+        lcuTimeLeft: info.timeLeft,
+        at: Date.now(),
+      };
+    }
+  }
   timelineLog(session, info);
 
   if (session.gameId !== state.gameId) {
