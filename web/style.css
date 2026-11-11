@@ -1887,6 +1887,63 @@ body.modal-open {
   width: min(560px, 100%);
 }
 
+.spell-combos {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.spell-combo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.spell-combo:hover {
+  border-color: rgba(10, 200, 185, 0.35);
+}
+
+.spell-combo.selected {
+  border-color: rgba(10, 200, 185, 0.65);
+  background: rgba(10, 200, 185, 0.07);
+}
+
+.spell-combo-icons {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+
+.spell-combo-icons .spell-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+}
+
+.spell-combo-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.spell-combo-copy strong {
+  font-size: 13px;
+}
+
+.spell-combo-copy span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .spell-slots {
   display: flex;
   gap: 10px;

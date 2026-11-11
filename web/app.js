@@ -32,17 +32,31 @@ const state = {
   invitedPuuids: new Set(),
   lastPartyId: '',
   spellCatalog: [],
-  spellPick: { activeSlot: 1, spell1Id: 0, spell2Id: 0 },
+  spellPick: { combo: 'ghost' },
 };
 
-const COMMON_SPELL_IDS = [6, 32];
+const SPELL_COMBOS = {
+  ghost: {
+    label: '闪现 + 疾跑',
+    hint: '常用',
+    ids: [4, 6],
+  },
+  snowball: {
+    label: '闪现 + 雪球',
+    hint: '偶尔使用',
+    ids: [4, 32],
+  },
+};
+
 const SPELL_FALLBACK = [
+  { id: 4, name: '闪现' },
   { id: 6, name: '疾跑' },
   { id: 32, name: '雪球' },
 ];
 
 function spellDisplayName(id, fallback) {
   const number = Number(id);
+  if (number === 4) return '闪现';
   if (number === 6) return '疾跑';
   if (number === 32) return '雪球';
   return fallback || `技能 ${number}`;
@@ -1045,117 +1059,52 @@ function closeSpellModal() {
 }
 
 function renderSpellModal() {
-  const pick = state.spellPick;
-  const slot1 = spellInfo(pick.spell1Id);
-  const slot2 = spellInfo(pick.spell2Id);
-  $('spellSlot1Icon').innerHTML = spellIconHtml(slot1.id, slot1.name);
-  $('spellSlot1Name').textContent = slot1.id ? slot1.name : '未选择';
-  $('spellSlot2Icon').innerHTML = spellIconHtml(slot2.id, slot2.name);
-  $('spellSlot2Name').textContent = slot2.id ? slot2.name : '未选择';
-
-  document.querySelectorAll('.spell-slot').forEach((element) => {
-    element.classList.toggle(
-      'active',
-      Number(element.dataset.spellSlot) === pick.activeSlot,
-    );
-  });
-
-  const currentIds = [pick.spell1Id, pick.spell2Id].filter((id) => id > 0);
-  const byId = new Map();
-  for (const spell of state.spellCatalog) {
-    const id = Number(spell.id);
-    if (Number.isInteger(id) && id > 0) {
-      byId.set(id, {
-        id,
-        name: spellDisplayName(id, String(spell.name || '')),
-      });
-    }
-  }
-  for (const id of currentIds) {
-    if (!byId.has(id)) byId.set(id, { id, name: spellInfo(id).name });
-  }
-  if (!byId.size) {
-    for (const spell of SPELL_FALLBACK) byId.set(spell.id, spell);
-  }
-
-  const spells = [...byId.values()].filter(
-    (spell) =>
-      COMMON_SPELL_IDS.includes(spell.id) || currentIds.includes(spell.id),
-  );
-  const rank = (id) => {
-    const index = COMMON_SPELL_IDS.indexOf(id);
-    return index < 0 ? 999 : index;
-  };
-  spells.sort(
-    (a, b) => rank(a.id) - rank(b.id) || a.name.localeCompare(b.name, 'zh-CN'),
-  );
-
-  const activeId =
-    pick.activeSlot === 1 ? pick.spell1Id : pick.spell2Id;
-  $('spellGrid').innerHTML = spells
-    .map(
-      (spell) => `<button type="button" class="spell-choice${
-        Number(spell.id) === Number(activeId) ? ' selected' : ''
-      }" data-spell-id="${spell.id}" title="${esc(spell.name)}">
-        ${spellIconHtml(spell.id, spell.name)}
-        <span>${esc(spell.name)}</span>
-      </button>`,
-    )
+  const selectedCombo = state.spellPick.combo;
+  $('spellCombos').innerHTML = Object.entries(SPELL_COMBOS)
+    .map(([key, combo]) => {
+      const icons = combo.ids
+        .map((id) => spellIconHtml(id, spellInfo(id).name))
+        .join('');
+      return `<button type="button" class="spell-combo${
+        key === selectedCombo ? ' selected' : ''
+      }" data-spell-combo="${key}">
+        <span class="spell-combo-icons">${icons}</span>
+        <span class="spell-combo-copy">
+          <strong>${esc(combo.label)}</strong>
+          <span>${esc(combo.hint)}</span>
+        </span>
+      </button>`;
+    })
     .join('');
-
-  $('spellSave').disabled = !(
-    pick.spell1Id &&
-    pick.spell2Id &&
-    pick.spell1Id !== pick.spell2Id
-  );
+  $('spellSave').disabled = !selectedCombo;
 }
 
-async function openSpellModal() {
+function openSpellModal() {
   const s = state.status;
   if (!s?.phase) {
     showToast('当前不在选人阶段喵', 'error');
     return;
   }
-  const spells = Array.isArray(s.spells) ? s.spells : [];
-  const first = Number(spells[0]?.id) || 0;
-  const second = Number(spells[1]?.id) || 0;
-  const hasPreset =
-    (first === 6 && second === 32) || (first === 32 && second === 6);
-  state.spellPick = hasPreset
-    ? { activeSlot: 1, spell1Id: first, spell2Id: second }
-    : { activeSlot: 1, spell1Id: 6, spell2Id: 32 };
+  const ids = (Array.isArray(s.spells) ? s.spells : [])
+    .map((spell) => Number(spell.id))
+    .filter((id) => id > 0);
+  const hasGhost = ids.includes(4) && ids.includes(6);
+  const hasSnowball = ids.includes(4) && ids.includes(32);
+  state.spellPick = {
+    combo: hasGhost ? 'ghost' : hasSnowball ? 'snowball' : 'ghost',
+  };
   $('spellModal').classList.remove('hidden');
   document.body.classList.add('modal-open');
-  if (!state.spellCatalog.length) {
-    try {
-      const result = await requestJson('/api/summoner-spells');
-      if (result.ok && Array.isArray(result.data)) {
-        state.spellCatalog = result.data;
-      }
-    } catch {
-      // Fall back to the built-in common spell list.
-    }
-  }
-  renderSpellModal();
-}
-
-function assignSpell(id) {
-  const pick = state.spellPick;
-  const slotKey = pick.activeSlot === 1 ? 'spell1Id' : 'spell2Id';
-  const otherKey = pick.activeSlot === 1 ? 'spell2Id' : 'spell1Id';
-  if (pick[otherKey] === id) {
-    pick[otherKey] = pick[slotKey];
-  }
-  pick[slotKey] = id;
   renderSpellModal();
 }
 
 async function saveSpells() {
-  const { spell1Id, spell2Id } = state.spellPick;
-  if (!spell1Id || !spell2Id || spell1Id === spell2Id) {
-    showToast('请选择两个不同的召唤师技能喵', 'error');
+  const combo = SPELL_COMBOS[state.spellPick.combo];
+  if (!combo) {
+    showToast('请选择召唤师技能组合喵', 'error');
     return;
   }
+  const [spell1Id, spell2Id] = combo.ids;
   const button = $('spellSave');
   button.disabled = true;
   button.textContent = '保存中...';
@@ -1552,17 +1501,10 @@ function bindEvents() {
   $('changeSpellsBtn').addEventListener('click', openSpellModal);
   $('spellSave').addEventListener('click', saveSpells);
   $('spellModal').addEventListener('click', (event) => {
-    const slot = event.target.closest('[data-spell-slot]');
-    if (slot) {
-      state.spellPick.activeSlot =
-        Number(slot.dataset.spellSlot) === 2 ? 2 : 1;
-      renderSpellModal();
-      return;
-    }
-    const choice = event.target.closest('[data-spell-id]');
-    if (choice) {
-      assignSpell(Number(choice.dataset.spellId));
-    }
+    const combo = event.target.closest('[data-spell-combo]');
+    if (!combo) return;
+    state.spellPick.combo = combo.dataset.spellCombo;
+    renderSpellModal();
   });
   document.querySelectorAll('[data-close-spell]').forEach((element) => {
     element.addEventListener('click', closeSpellModal);

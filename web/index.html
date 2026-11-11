@@ -292,7 +292,7 @@
                   <input id="autoPickClientCard" type="checkbox" class="switch" />
                 </label>
                 <label class="switch-row">
-                  <span>进入选人时自动设置疾跑 + 雪球</span>
+                  <span>进入选人时自动设置闪现 + 疾跑</span>
                   <input id="autoSpellPreset" type="checkbox" class="switch" />
                 </label>
                 <label class="switch-row">
@@ -386,20 +386,10 @@
           <button type="button" class="icon-btn" data-close-spell title="关闭">×</button>
         </div>
         <div class="modal-body">
-          <div class="spell-slots">
-            <button type="button" class="spell-slot active" data-spell-slot="1">
-              <span class="slot-key">D</span>
-              <span id="spellSlot1Icon" class="slot-icon"></span>
-              <span id="spellSlot1Name" class="slot-name">未选择</span>
-            </button>
-            <button type="button" class="spell-slot" data-spell-slot="2">
-              <span class="slot-key">F</span>
-              <span id="spellSlot2Icon" class="slot-icon"></span>
-              <span id="spellSlot2Name" class="slot-name">未选择</span>
-            </button>
-          </div>
-          <p class="spell-hint muted">先点上方槽位，再点下方技能；两个技能不能重复。</p>
-          <div id="spellGrid" class="spell-grid"></div>
+          <div id="spellCombos" class="spell-combos"></div>
+          <p class="spell-hint muted">
+            只提供「闪现 + 疾跑」和「闪现 + 雪球」两种组合，默认疾跑。
+          </p>
           <div class="modal-actions spell-actions">
             <button id="spellSave" type="button" class="btn" disabled>保存</button>
             <button type="button" class="btn ghost" data-close-spell>取消</button>

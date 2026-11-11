@@ -61,10 +61,12 @@ const FALLBACK_SPELL_NAMES = {
   32: '标记',
 };
 
-// Personal preference: Ghost + Snowball, with Ghost first.
-const SPELL_PRESET_1 = 6;
-const SPELL_PRESET_2 = 32;
+// Personal preference: Flash is always kept; the second slot is Ghost most of
+// the time, with Snowball available as the alternative.
+const SPELL_PRESET_1 = 4;
+const SPELL_PRESET_2 = 6;
 const SPELL_DISPLAY_NAMES = {
+  4: '闪现',
   6: '疾跑',
   32: '雪球',
 };
@@ -2043,7 +2045,7 @@ async function handleSession(client, session, runtime2, state) {
           SPELL_PRESET_2,
         );
         if (result.ok) {
-          log('[AUTO] 已按习惯设置召唤师技能: 疾跑 / 雪球');
+          log('[AUTO] 已按习惯设置召唤师技能: 闪现 / 疾跑');
         } else {
           log(`[WARN] 自动设置召唤师技能失败: ${result.message}`);
         }
