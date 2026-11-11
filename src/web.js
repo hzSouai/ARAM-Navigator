@@ -495,6 +495,24 @@ async function handleRequest(req, res, runtime, log) {
     return;
   }
 
+  if (pathname === '/api/summoner-spells' && req.method === 'GET') {
+    const spells = [...runtime.spellNames.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.id - b.id);
+    sendJson(res, 200, spells);
+    return;
+  }
+
+  if (pathname === '/api/spells' && req.method === 'POST') {
+    const body = await readJson(req);
+    const result = await runtime.changeSummonerSpells(
+      body.spell1Id,
+      body.spell2Id,
+    );
+    sendJson(res, result.ok ? 200 : 409, result);
+    return;
+  }
+
   if (pathname === '/api/leave-lobby' && req.method === 'POST') {
     const result = await runtime.leaveLobby();
     sendJson(res, result.ok ? 200 : 409, result);

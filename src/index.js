@@ -1083,6 +1083,98 @@ async function inviteFriends(puuids) {
   }
 }
 
+async function changeSummonerSpells(spell1Id, spell2Id) {
+  if (!runtime.client) return { ok: false, message: '还没有连接客户端' };
+  const first = Number(spell1Id);
+  const second = Number(spell2Id);
+  if (
+    !Number.isInteger(first) ||
+    first <= 0 ||
+    !Number.isInteger(second) ||
+    second <= 0
+  ) {
+    return { ok: false, message: '召唤师技能不正确喵' };
+  }
+  if (first === second) {
+    return { ok: false, message: '两个召唤师技能不能相同喵' };
+  }
+
+  let session;
+  try {
+    session = await getChampSelectSession(runtime.client);
+  } catch (error) {
+    return { ok: false, message: `读取选人会话失败: ${error.message}` };
+  }
+  if (!session) return { ok: false, message: '当前不在选人阶段喵' };
+
+  try {
+    const res = await request(
+      runtime.client,
+      'PATCH',
+      '/lol-champ-select/v1/session/my-selection',
+      { spell1Id: first, spell2Id: second },
+    );
+    if (res.status < 200 || res.status >= 300) {
+      let detail = '';
+      try {
+        const body = JSON.parse(res.body);
+        detail = body.message || body.errorCode || '';
+      } catch {
+        detail = res.body.slice(0, 200);
+      }
+      log(
+        `[WARN] 更换召唤师技能失败: HTTP ${res.status}${
+          detail ? ` ${detail}` : ''
+        }`,
+      );
+      return {
+        ok: false,
+        message: `更换失败: HTTP ${res.status}${detail ? ` ${detail}` : ''}`,
+      };
+    }
+
+    // The PATCH can be applied asynchronously; re-read and verify.
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await sleep(150);
+      let after = null;
+      try {
+        after = await getChampSelectSession(runtime.client);
+      } catch {
+        after = null;
+      }
+      const local = (after?.myTeam || []).find(
+        (player) =>
+          Number(player.cellId) === Number(after.localPlayerCellId),
+      );
+      if (
+        Number(local?.spell1Id) === first &&
+        Number(local?.spell2Id) === second
+      ) {
+        runtime.lastSession = after;
+        const names = `${spellRef(first).name} / ${spellRef(second).name}`;
+        log(`[OK] 已更换召唤师技能: ${names}`);
+        runtime.lastAction = {
+          type: 'spells',
+          manual: true,
+          ok: true,
+          at: Date.now(),
+          message: `已更换召唤师技能: ${names}`,
+        };
+        publishStatus(true);
+        return { ok: true, message: `已更换召唤师技能: ${names}喵` };
+      }
+    }
+
+    return {
+      ok: false,
+      message: '客户端没有应用召唤师技能更改，可能当前阶段不允许更换喵',
+    };
+  } catch (error) {
+    log(`[WARN] 更换召唤师技能失败: ${error.message}`);
+    return { ok: false, message: error.message };
+  }
+}
+
 const DEFAULT_HEXTECH_QUEUE_ID = 2400;
 
 async function createHextechLobby() {
@@ -2174,6 +2266,7 @@ async function main() {
   runtime.getFriends = getFriendsForUi;
   runtime.joinFriendLobby = joinFriendLobby;
   runtime.inviteFriends = inviteFriends;
+  runtime.changeSummonerSpells = changeSummonerSpells;
   runtime.createHextechLobby = createHextechLobby;
   runtime.findMatch = findMatch;
 

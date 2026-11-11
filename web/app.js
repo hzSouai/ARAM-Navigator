@@ -31,7 +31,22 @@ const state = {
   idleWishKey: '',
   invitedPuuids: new Set(),
   lastPartyId: '',
+  spellCatalog: [],
+  spellPick: { activeSlot: 1, spell1Id: 0, spell2Id: 0 },
 };
+
+const COMMON_SPELL_IDS = [4, 32, 7, 13, 3, 14, 6, 1, 21];
+const SPELL_FALLBACK = [
+  { id: 4, name: '闪现' },
+  { id: 32, name: '标记' },
+  { id: 7, name: '治疗' },
+  { id: 13, name: '清晰术' },
+  { id: 3, name: '虚弱' },
+  { id: 14, name: '引燃' },
+  { id: 6, name: '疾跑' },
+  { id: 1, name: '净化' },
+  { id: 21, name: '屏障' },
+];
 
 function champIcon(id, name, size = '') {
   if (!id) {
@@ -42,6 +57,27 @@ function champIcon(id, name, size = '') {
       onerror="this.style.display='none';this.parentElement.classList.add('fallback')">
     <span class="fallback-letter">${esc(firstChar(name))}</span>
   </span>`;
+}
+
+function spellIconHtml(id, name) {
+  if (!id) {
+    return '<span class="spell-icon empty"><span class="spell-fallback">?</span></span>';
+  }
+  return `<span class="spell-icon" title="${esc(name)}">
+    <img src="/api/spell-icon/${id}" alt="" loading="lazy"
+      onerror="this.style.display='none';this.parentElement.classList.add('fallback')">
+    <span class="spell-fallback">${esc(firstChar(name))}</span>
+  </span>`;
+}
+
+function spellInfo(id) {
+  const number = Number(id) || 0;
+  const catalogHit = state.spellCatalog.find(
+    (spell) => Number(spell.id) === number,
+  );
+  if (catalogHit) return catalogHit;
+  const fallback = SPELL_FALLBACK.find((spell) => spell.id === number);
+  return { id: number, name: fallback?.name || (number ? `技能 ${number}` : '') };
 }
 
 function tradeStateInfo(state) {
@@ -994,6 +1030,138 @@ async function sendInvites() {
   }
 }
 
+function closeSpellModal() {
+  $('spellModal').classList.add('hidden');
+  document.body.classList.remove('modal-open');
+}
+
+function renderSpellModal() {
+  const pick = state.spellPick;
+  const slot1 = spellInfo(pick.spell1Id);
+  const slot2 = spellInfo(pick.spell2Id);
+  $('spellSlot1Icon').innerHTML = spellIconHtml(slot1.id, slot1.name);
+  $('spellSlot1Name').textContent = slot1.id ? slot1.name : '未选择';
+  $('spellSlot2Icon').innerHTML = spellIconHtml(slot2.id, slot2.name);
+  $('spellSlot2Name').textContent = slot2.id ? slot2.name : '未选择';
+
+  document.querySelectorAll('.spell-slot').forEach((element) => {
+    element.classList.toggle(
+      'active',
+      Number(element.dataset.spellSlot) === pick.activeSlot,
+    );
+  });
+
+  const currentIds = [pick.spell1Id, pick.spell2Id].filter((id) => id > 0);
+  const byId = new Map();
+  for (const spell of state.spellCatalog) {
+    const id = Number(spell.id);
+    if (Number.isInteger(id) && id > 0) {
+      byId.set(id, { id, name: String(spell.name || '') });
+    }
+  }
+  for (const id of currentIds) {
+    if (!byId.has(id)) byId.set(id, { id, name: spellInfo(id).name });
+  }
+  if (!byId.size) {
+    for (const spell of SPELL_FALLBACK) byId.set(spell.id, spell);
+  }
+
+  const spells = [...byId.values()].filter(
+    (spell) =>
+      COMMON_SPELL_IDS.includes(spell.id) || currentIds.includes(spell.id),
+  );
+  const rank = (id) => {
+    const index = COMMON_SPELL_IDS.indexOf(id);
+    return index < 0 ? 999 : index;
+  };
+  spells.sort(
+    (a, b) => rank(a.id) - rank(b.id) || a.name.localeCompare(b.name, 'zh-CN'),
+  );
+
+  const activeId =
+    pick.activeSlot === 1 ? pick.spell1Id : pick.spell2Id;
+  $('spellGrid').innerHTML = spells
+    .map(
+      (spell) => `<button type="button" class="spell-choice${
+        Number(spell.id) === Number(activeId) ? ' selected' : ''
+      }" data-spell-id="${spell.id}" title="${esc(spell.name)}">
+        ${spellIconHtml(spell.id, spell.name)}
+        <span>${esc(spell.name)}</span>
+      </button>`,
+    )
+    .join('');
+
+  $('spellSave').disabled = !(
+    pick.spell1Id &&
+    pick.spell2Id &&
+    pick.spell1Id !== pick.spell2Id
+  );
+}
+
+async function openSpellModal() {
+  const s = state.status;
+  if (!s?.phase) {
+    showToast('当前不在选人阶段喵', 'error');
+    return;
+  }
+  const spells = Array.isArray(s.spells) ? s.spells : [];
+  state.spellPick = {
+    activeSlot: 1,
+    spell1Id: Number(spells[0]?.id) || 0,
+    spell2Id: Number(spells[1]?.id) || 0,
+  };
+  $('spellModal').classList.remove('hidden');
+  document.body.classList.add('modal-open');
+  if (!state.spellCatalog.length) {
+    try {
+      const result = await requestJson('/api/summoner-spells');
+      if (result.ok && Array.isArray(result.data)) {
+        state.spellCatalog = result.data;
+      }
+    } catch {
+      // Fall back to the built-in common spell list.
+    }
+  }
+  renderSpellModal();
+}
+
+function assignSpell(id) {
+  const pick = state.spellPick;
+  const slotKey = pick.activeSlot === 1 ? 'spell1Id' : 'spell2Id';
+  const otherKey = pick.activeSlot === 1 ? 'spell2Id' : 'spell1Id';
+  if (pick[otherKey] === id) {
+    pick[otherKey] = pick[slotKey];
+  }
+  pick[slotKey] = id;
+  renderSpellModal();
+}
+
+async function saveSpells() {
+  const { spell1Id, spell2Id } = state.spellPick;
+  if (!spell1Id || !spell2Id || spell1Id === spell2Id) {
+    showToast('请选择两个不同的召唤师技能喵', 'error');
+    return;
+  }
+  const button = $('spellSave');
+  button.disabled = true;
+  button.textContent = '保存中...';
+  try {
+    const result = await postJson('/api/spells', { spell1Id, spell2Id });
+    if (result.ok) {
+      showToast(result.data?.message || '已更换召唤师技能喵');
+      closeSpellModal();
+      refreshStatus();
+    } else {
+      showToast(result.data?.message || '更换召唤师技能失败喵', 'error');
+    }
+  } catch (error) {
+    showToast(`更换召唤师技能失败: ${error.message}`, 'error');
+  } finally {
+    button.textContent = '保存';
+    renderSpellModal();
+  }
+}
+
 async function loadFriends() {
   try {
     const result = await requestJson('/api/friends');
@@ -1365,6 +1533,27 @@ function bindEvents() {
   $('refreshFriends').addEventListener('click', loadFriends);
   $('inviteFriendsBtn').addEventListener('click', openInviteModal);
   $('inviteSend').addEventListener('click', sendInvites);
+  $('changeSpellsBtn').addEventListener('click', openSpellModal);
+  $('spellSave').addEventListener('click', saveSpells);
+  $('spellModal').addEventListener('click', (event) => {
+    const slot = event.target.closest('[data-spell-slot]');
+    if (slot) {
+      state.spellPick.activeSlot =
+        Number(slot.dataset.spellSlot) === 2 ? 2 : 1;
+      renderSpellModal();
+      return;
+    }
+    const choice = event.target.closest('[data-spell-id]');
+    if (choice) {
+      assignSpell(Number(choice.dataset.spellId));
+    }
+  });
+  document.querySelectorAll('[data-close-spell]').forEach((element) => {
+    element.addEventListener('click', closeSpellModal);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeSpellModal();
+  });
   $('inviteList').addEventListener('change', () => {
     const any = $('inviteList').querySelectorAll('.invite-check:checked').length;
     $('inviteSend').disabled = any === 0;

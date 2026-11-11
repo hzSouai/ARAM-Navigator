@@ -86,7 +86,12 @@
               </div>
             </div>
             <div id="spellBlock" class="spell-block hidden">
-              <span class="spell-label">召唤师技能</span>
+              <span class="spell-label">
+                召唤师技能
+                <button id="changeSpellsBtn" type="button" class="spell-change">
+                  更换
+                </button>
+              </span>
               <div id="spellIcons" class="spell-icons"></div>
             </div>
             <div class="timer-block">
@@ -358,6 +363,42 @@
           <div class="modal-actions invite-actions">
             <button id="inviteSend" type="button" class="btn" disabled>发送邀请</button>
             <button type="button" class="btn ghost" data-close-invite>取消</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div
+      id="spellModal"
+      class="modal spell-modal hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="spellTitle"
+    >
+      <div class="modal-backdrop" data-close-spell></div>
+      <div class="modal-card spell-card">
+        <div class="modal-head">
+          <h2 id="spellTitle">更换召唤师技能</h2>
+          <button type="button" class="icon-btn" data-close-spell title="关闭">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="spell-slots">
+            <button type="button" class="spell-slot active" data-spell-slot="1">
+              <span class="slot-key">D</span>
+              <span id="spellSlot1Icon" class="slot-icon"></span>
+              <span id="spellSlot1Name" class="slot-name">未选择</span>
+            </button>
+            <button type="button" class="spell-slot" data-spell-slot="2">
+              <span class="slot-key">F</span>
+              <span id="spellSlot2Icon" class="slot-icon"></span>
+              <span id="spellSlot2Name" class="slot-name">未选择</span>
+            </button>
+          </div>
+          <p class="spell-hint muted">先点上方槽位，再点下方技能；两个技能不能重复。</p>
+          <div id="spellGrid" class="spell-grid"></div>
+          <div class="modal-actions spell-actions">
+            <button id="spellSave" type="button" class="btn" disabled>保存</button>
+            <button type="button" class="btn ghost" data-close-spell>取消</button>
           </div>
         </div>
       </div>
