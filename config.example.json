@@ -33,6 +33,7 @@
   "autoAccept": true,
   "autoSelectCandidate": true,
   "autoPickClientCard": true,
+  "autoSpellPreset": true,
   "benchBurstMode": true,
   "acceptDelayMs": 1500,
   "playAgainDelayMs": 3000,

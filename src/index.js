@@ -61,6 +61,14 @@ const FALLBACK_SPELL_NAMES = {
   32: '标记',
 };
 
+// Personal preference: Ghost + Snowball, with Ghost first.
+const SPELL_PRESET_1 = 6;
+const SPELL_PRESET_2 = 32;
+const SPELL_DISPLAY_NAMES = {
+  6: '疾跑',
+  32: '雪球',
+};
+
 function fallbackChampionCatalog() {
   return FALLBACK_CHAMPIONS.map(([id, name, alias]) => ({
     id,
@@ -97,6 +105,7 @@ const DEFAULTS = {
   autoAccept: true,
   autoSelectCandidate: true,
   autoPickClientCard: true,
+  autoSpellPreset: true,
   benchBurstMode: true,
   acceptDelayMs: 1500,
   playAgainDelayMs: 3000,
@@ -138,6 +147,7 @@ function freshState() {
     burstDone: false,
     pendingDoneLogged: false,
     pendingExhaustedLogged: false,
+    spellPresetAttempted: false,
   };
 }
 
@@ -402,6 +412,7 @@ function normalizeConfig(parsed) {
   config.autoAccept = Boolean(config.autoAccept);
   config.autoSelectCandidate = Boolean(config.autoSelectCandidate);
   config.autoPickClientCard = Boolean(config.autoPickClientCard);
+  config.autoSpellPreset = Boolean(config.autoSpellPreset);
   config.benchBurstMode = Boolean(config.benchBurstMode);
   config.acceptDelayMs = clampNumber(
     config.acceptDelayMs,
@@ -614,6 +625,7 @@ function spellRef(id) {
   return {
     id: number,
     name:
+      SPELL_DISPLAY_NAMES[number] ||
       runtime.spellNames.get(number) ||
       FALLBACK_SPELL_NAMES[number] ||
       `技能 ${number}`,
@@ -734,6 +746,7 @@ function buildStatus() {
     autoAccept: Boolean(config.autoAccept),
     autoSelectCandidate: Boolean(config.autoSelectCandidate),
     autoPickClientCard: Boolean(config.autoPickClientCard),
+    autoSpellPreset: Boolean(config.autoSpellPreset),
     benchBurstMode: Boolean(config.benchBurstMode),
     config: {
       startupDelayMs: config.startupDelayMs,
@@ -747,6 +760,7 @@ function buildStatus() {
       autoAccept: config.autoAccept,
       autoSelectCandidate: config.autoSelectCandidate,
       autoPickClientCard: config.autoPickClientCard,
+      autoSpellPreset: config.autoSpellPreset,
       benchBurstMode: config.benchBurstMode,
       acceptDelayMs: config.acceptDelayMs,
       playAgainDelayMs: config.playAgainDelayMs,
@@ -2002,6 +2016,39 @@ async function handleSession(client, session, runtime2, state) {
       `进入选人: gameId=${session.gameId ?? '?'} queue=${session.queueId ?? '?'} phase=${info.phase}`,
     );
     log(`详细选人时间线: ${timelinePathForNow()}`);
+  }
+
+  const aramQueues = new Set([450, hextechQueueId]);
+  if (
+    config.autoSpellPreset &&
+    !runtime2.paused &&
+    !state.spellPresetAttempted &&
+    aramQueues.has(Number(session.queueId)) &&
+    ['PLANNING', 'BAN_PICK', 'FINALIZATION'].includes(info.phase)
+  ) {
+    const me = (session.myTeam || []).find(
+      (player) =>
+        Number(player.cellId) === Number(session.localPlayerCellId),
+    );
+    const spell1 = Number(me?.spell1Id) || 0;
+    const spell2 = Number(me?.spell2Id) || 0;
+    if (spell1 > 0 && spell2 > 0) {
+      state.spellPresetAttempted = true;
+      const already =
+        (spell1 === SPELL_PRESET_1 && spell2 === SPELL_PRESET_2) ||
+        (spell1 === SPELL_PRESET_2 && spell2 === SPELL_PRESET_1);
+      if (!already) {
+        const result = await changeSummonerSpells(
+          SPELL_PRESET_1,
+          SPELL_PRESET_2,
+        );
+        if (result.ok) {
+          log('[AUTO] 已按习惯设置召唤师技能: 疾跑 / 雪球');
+        } else {
+          log(`[WARN] 自动设置召唤师技能失败: ${result.message}`);
+        }
+      }
+    }
   }
 
   const stableKey = `${info.phase}|${info.held}|${info.bench.join(',')}`;

@@ -35,18 +35,18 @@ const state = {
   spellPick: { activeSlot: 1, spell1Id: 0, spell2Id: 0 },
 };
 
-const COMMON_SPELL_IDS = [4, 32, 7, 13, 3, 14, 6, 1, 21];
+const COMMON_SPELL_IDS = [6, 32];
 const SPELL_FALLBACK = [
-  { id: 4, name: '闪现' },
-  { id: 32, name: '标记' },
-  { id: 7, name: '治疗' },
-  { id: 13, name: '清晰术' },
-  { id: 3, name: '虚弱' },
-  { id: 14, name: '引燃' },
   { id: 6, name: '疾跑' },
-  { id: 1, name: '净化' },
-  { id: 21, name: '屏障' },
+  { id: 32, name: '雪球' },
 ];
+
+function spellDisplayName(id, fallback) {
+  const number = Number(id);
+  if (number === 6) return '疾跑';
+  if (number === 32) return '雪球';
+  return fallback || `技能 ${number}`;
+}
 
 function champIcon(id, name, size = '') {
   if (!id) {
@@ -75,9 +75,17 @@ function spellInfo(id) {
   const catalogHit = state.spellCatalog.find(
     (spell) => Number(spell.id) === number,
   );
-  if (catalogHit) return catalogHit;
+  if (catalogHit) {
+    return {
+      id: number,
+      name: spellDisplayName(number, catalogHit.name),
+    };
+  }
   const fallback = SPELL_FALLBACK.find((spell) => spell.id === number);
-  return { id: number, name: fallback?.name || (number ? `技能 ${number}` : '') };
+  return {
+    id: number,
+    name: spellDisplayName(number, fallback?.name),
+  };
 }
 
 function tradeStateInfo(state) {
@@ -571,6 +579,7 @@ function renderStatus(s) {
   if (s.autoAccept) extras.push('自动接受');
   if (s.autoSelectCandidate) extras.push('待选自动');
   if (s.autoPickClientCard) extras.push('三选一自动');
+  if (s.autoSpellPreset) extras.push('技能预设');
   $('modeDetail').textContent = `${s.dryRun ? '练习模式' : '自动换人'}${
     s.paused ? ' · 已暂停' : ''
   }${extras.length ? ` · ${extras.join(' / ')}` : ''}`;
@@ -1056,7 +1065,10 @@ function renderSpellModal() {
   for (const spell of state.spellCatalog) {
     const id = Number(spell.id);
     if (Number.isInteger(id) && id > 0) {
-      byId.set(id, { id, name: String(spell.name || '') });
+      byId.set(id, {
+        id,
+        name: spellDisplayName(id, String(spell.name || '')),
+      });
     }
   }
   for (const id of currentIds) {
@@ -1105,11 +1117,13 @@ async function openSpellModal() {
     return;
   }
   const spells = Array.isArray(s.spells) ? s.spells : [];
-  state.spellPick = {
-    activeSlot: 1,
-    spell1Id: Number(spells[0]?.id) || 0,
-    spell2Id: Number(spells[1]?.id) || 0,
-  };
+  const first = Number(spells[0]?.id) || 0;
+  const second = Number(spells[1]?.id) || 0;
+  const hasPreset =
+    (first === 6 && second === 32) || (first === 32 && second === 6);
+  state.spellPick = hasPreset
+    ? { activeSlot: 1, spell1Id: first, spell2Id: second }
+    : { activeSlot: 1, spell1Id: 6, spell2Id: 32 };
   $('spellModal').classList.remove('hidden');
   document.body.classList.add('modal-open');
   if (!state.spellCatalog.length) {
@@ -1246,6 +1260,7 @@ function loadSettings(config) {
   $('autoAccept').checked = config.autoAccept !== false;
   $('autoSelectCandidate').checked = config.autoSelectCandidate !== false;
   $('autoPickClientCard').checked = config.autoPickClientCard !== false;
+  $('autoSpellPreset').checked = config.autoSpellPreset !== false;
   $('benchBurstMode').checked = config.benchBurstMode !== false;
   $('dryRun').checked = Boolean(config.dryRun);
 }
@@ -1282,6 +1297,7 @@ async function saveSettings() {
     autoAccept: $('autoAccept').checked,
     autoSelectCandidate: $('autoSelectCandidate').checked,
     autoPickClientCard: $('autoPickClientCard').checked,
+    autoSpellPreset: $('autoSpellPreset').checked,
     benchBurstMode: $('benchBurstMode').checked,
     dryRun: $('dryRun').checked,
   };
