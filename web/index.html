@@ -145,6 +145,21 @@
         </article>
 
         <aside class="side-column">
+          <article class="card room-card">
+            <div class="card-title">
+              <span>当前房间</span>
+              <span id="roomQueue" class="muted">未在房间</span>
+            </div>
+            <div id="roomBody" class="room-body">
+              <div class="empty">当前不在房间</div>
+            </div>
+            <div class="room-actions">
+              <button id="inviteFriendsBtn" type="button" class="btn small" disabled>
+                邀请好友
+              </button>
+            </div>
+          </article>
+
           <article class="card friends-card">
             <div class="card-title">
               <span>好友房间</span>
@@ -311,6 +326,34 @@
           <div class="confirm-actions">
             <button id="confirmCancel" type="button" class="btn ghost">取消</button>
             <button id="confirmOk" type="button" class="btn">确定</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div
+      id="inviteModal"
+      class="modal invite-modal hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="inviteTitle"
+    >
+      <div class="modal-backdrop" data-close-invite></div>
+      <div class="modal-card invite-card">
+        <div class="modal-head">
+          <h2 id="inviteTitle">邀请好友</h2>
+          <button type="button" class="icon-btn" data-close-invite title="关闭">×</button>
+        </div>
+        <div class="modal-body">
+          <p class="invite-hint muted">
+            选择当前在线的好友发送房间邀请；已在房间内的好友不会重复邀请。
+          </p>
+          <div id="inviteList" class="invite-list">
+            <div class="empty">正在读取好友列表...</div>
+          </div>
+          <div class="modal-actions invite-actions">
+            <button id="inviteSend" type="button" class="btn" disabled>发送邀请</button>
+            <button type="button" class="btn ghost" data-close-invite>取消</button>
           </div>
         </div>
       </div>

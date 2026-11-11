@@ -786,9 +786,16 @@ function normalizeFriend(friend, myPartyId) {
     statusKey.startsWith('hosting');
   const name = friend.gameName || friend.name || friend.pid || friend.puuid || '?';
   const tag = friend.gameTag || '';
+  const puuid = String(
+    friend.puuid ||
+      friend.pid ||
+      String(friend.id || '').replace(/@.*$/, ''),
+  ).trim();
 
   return {
     id: friend.id,
+    puuid,
+    summonerId: Number(friend.summonerId) || 0,
     name: tag ? `${name}#${tag}` : name,
     icon: Number(friend.icon) || null,
     availability,
@@ -883,6 +890,95 @@ async function joinFriendLobby(partyId) {
     };
   } catch (error) {
     log(`[WARN] 加入好友房间失败: ${error.message}`);
+    return { ok: false, message: error.message };
+  }
+}
+
+async function inviteFriends(puuids) {
+  if (!runtime.client) return { ok: false, message: '还没有连接客户端' };
+  if (!runtime.inLobby || !runtime.lobby) {
+    return { ok: false, message: '当前不在房间里，先创建或加入房间喵' };
+  }
+
+  const list = [
+    ...new Set(
+      (Array.isArray(puuids) ? puuids : [])
+        .map((puuid) => String(puuid || '').trim())
+        .filter(Boolean),
+    ),
+  ].slice(0, 10);
+  if (!list.length) return { ok: false, message: '请先选择要邀请的好友喵' };
+
+  try {
+    const invitations = [];
+    for (const puuid of list) {
+      let summonerId = 0;
+      try {
+        const summonerRes = await request(
+          runtime.client,
+          'GET',
+          `/lol-summoner/v2/summoners/puuid/${encodeURIComponent(puuid)}`,
+        );
+        if (summonerRes.status === 200 && summonerRes.body.trim()) {
+          const summoner = JSON.parse(summonerRes.body);
+          summonerId = Number(summoner.summonerId || summoner.id) || 0;
+        }
+      } catch {
+        summonerId = 0;
+      }
+      invitations.push({ toPuuid: puuid, toSummonerId: summonerId });
+    }
+
+    const res = await request(
+      runtime.client,
+      'POST',
+      '/lol-lobby/v2/lobby/invitations',
+      invitations,
+    );
+    if (res.status >= 200 && res.status < 300) {
+      let results = [];
+      try {
+        const parsed = res.body.trim() ? JSON.parse(res.body) : [];
+        results = Array.isArray(parsed) ? parsed : [];
+      } catch {
+        results = [];
+      }
+      const failed = results.filter(
+        (entry) => entry && (entry.errorType || /error|fail/i.test(String(entry.state || ''))),
+      ).length;
+      const message = failed
+        ? `已发送 ${invitations.length} 个邀请，其中 ${failed} 个可能失败喵`
+        : `已发送 ${invitations.length} 个好友邀请喵`;
+      log(`[OK] ${message}`);
+      runtime.lastAction = {
+        type: 'invite',
+        manual: true,
+        ok: true,
+        at: Date.now(),
+        message,
+      };
+      publishStatus(true);
+      return { ok: true, message };
+    }
+
+    let detail = '';
+    try {
+      const body = JSON.parse(res.body);
+      detail = body.message || body.errorCode || '';
+    } catch {
+      detail = res.body.slice(0, 200);
+    }
+    log(
+      `[WARN] 发送好友邀请失败: HTTP ${res.status}${
+        detail ? ` ${detail}` : ''
+      }`,
+    );
+    return {
+      ok: false,
+      message: `邀请失败: HTTP ${res.status}${detail ? ` ${detail}` : ''}`,
+    };
+  } catch (error) {
+    log(`[WARN] 发送好友邀请失败: ${error.message}`);
     return { ok: false, message: error.message };
   }
 }
@@ -1082,6 +1178,23 @@ async function tickGameflow(client, runtime2) {
           queueId: Number(lobby.gameConfig?.queueId) || null,
           size: Array.isArray(lobby.members) ? lobby.members.length : 0,
           isLeader: lobby.localMember ? lobby.localMember.isLeader !== false : null,
+          partyType: String(lobby.partyType || ''),
+          gameMode: String(lobby.gameConfig?.gameMode || ''),
+          members: (Array.isArray(lobby.members) ? lobby.members : []).map(
+            (member) => ({
+              summonerId: Number(member.summonerId) || 0,
+              puuid: String(member.puuid || ''),
+              name: member.gameName
+                ? `${member.gameName}${
+                    member.tagLine ? `#${member.tagLine}` : ''
+                  }`
+                : member.summonerName ||
+                  member.displayName ||
+                  String(member.summonerId || '?'),
+              isLeader: Boolean(member.isLeader),
+              ready: Boolean(member.ready),
+            }),
+          ),
         };
       } else {
         runtime2.inLobby = false;
@@ -1936,6 +2049,7 @@ async function main() {
   runtime.acceptTrade = acceptTrade;
   runtime.getFriends = getFriendsForUi;
   runtime.joinFriendLobby = joinFriendLobby;
+  runtime.inviteFriends = inviteFriends;
   runtime.createHextechLobby = createHextechLobby;
   runtime.findMatch = findMatch;
 

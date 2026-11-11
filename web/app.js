@@ -29,6 +29,8 @@ const state = {
   friendsError: '',
   clientCardsKey: '',
   idleWishKey: '',
+  invitedPuuids: new Set(),
+  lastPartyId: '',
 };
 
 function champIcon(id, name, size = '') {
@@ -447,6 +449,7 @@ function renderStatus(s) {
       }${s.lobby?.isLeader === true ? ' · 房主' : ''}`
     : '不在房间';
   $('leaveLobbyBtn').classList.toggle('hidden', !s.inLobby);
+  renderRoom(s);
 
   const createLobbyBtn = $('createLobbyBtn');
   const findMatchBtn = $('findMatchBtn');
@@ -805,6 +808,171 @@ function renderFriends() {
         </div>`;
       })
       .join('');
+}
+
+function renderRoom(s) {
+  const lobby = s.lobby;
+  const inviteBtn = $('inviteFriendsBtn');
+  if (!s.inLobby || !lobby) {
+    $('roomQueue').textContent = '未在房间';
+    $('roomBody').innerHTML =
+      '<div class="empty">当前不在房间。可在下方创建或加入好友房间。</div>';
+    if (inviteBtn) inviteBtn.disabled = true;
+    if (state.lastPartyId) {
+      state.lastPartyId = '';
+      state.invitedPuuids.clear();
+    }
+    return;
+  }
+
+  const partyId = String(lobby.partyId || '');
+  if (partyId && partyId !== state.lastPartyId) {
+    state.lastPartyId = partyId;
+    state.invitedPuuids.clear();
+  }
+
+  const queue =
+    queueLabelById(lobby.queueId) ||
+    (lobby.queueId ? `队列 ${lobby.queueId}` : '房间');
+  $('roomQueue').textContent = queue;
+  if (inviteBtn) inviteBtn.disabled = false;
+
+  const members = Array.isArray(lobby.members) ? lobby.members : [];
+  const leader = members.find((member) => member.isLeader);
+  const meta = [`${members.length || lobby.size || 0} 人`];
+  if (lobby.isLeader) meta.push('你是房主');
+  else if (leader?.name) meta.push(`房主 ${leader.name}`);
+  const partyTypeLabel = {
+    open: '开放房间',
+    closed: '关闭房间',
+  }[String(lobby.partyType || '').toLowerCase()];
+  if (partyTypeLabel) meta.push(partyTypeLabel);
+
+  const memberHtml = members
+    .map(
+      (member) => `<span class="room-member">
+        <span class="room-avatar">${esc(firstChar(member.name))}</span>
+        <span class="room-member-name" title="${esc(member.name)}">${esc(
+          member.name,
+        )}</span>
+        ${member.isLeader ? '<span class="room-tag">房主</span>' : ''}
+        ${member.ready ? '<span class="room-ready">就绪</span>' : ''}
+      </span>`,
+    )
+    .join('');
+
+  $('roomBody').innerHTML = `<div class="room-meta">
+      ${meta.map((item) => `<span>${esc(item)}</span>`).join('')}
+      <span class="room-party" title="${esc(partyId)}">${esc(
+        partyId ? `${partyId.slice(0, 10)}…` : '',
+      )}</span>
+    </div>
+    <div class="room-members">${
+      memberHtml || '<span class="muted">暂无成员</span>'
+    }</div>`;
+}
+
+function closeInviteModal() {
+  $('inviteModal').classList.add('hidden');
+  document.body.classList.remove('modal-open');
+}
+
+function renderInviteList() {
+  if (state.friendsError) {
+    $('inviteList').innerHTML = `<div class="empty">${esc(
+      state.friendsError,
+    )}</div>`;
+    $('inviteSend').disabled = true;
+    return;
+  }
+  const friends = (state.friends || []).filter(
+    (friend) => friend.availability !== 'offline',
+  );
+  if (!friends.length) {
+    $('inviteList').innerHTML = '<div class="empty">没有在线好友喵</div>';
+    $('inviteSend').disabled = true;
+    return;
+  }
+
+  $('inviteList').innerHTML = friends
+    .map((friend) => {
+      const invited = Boolean(
+        friend.puuid && state.invitedPuuids.has(friend.puuid),
+      );
+      const disabled = Boolean(friend.inMyParty || !friend.puuid || invited);
+      const status = friendStatus(friend);
+      const mark = friend.inMyParty
+        ? '已在房间'
+        : !friend.puuid
+          ? '无法邀请'
+          : invited
+            ? '已邀请'
+            : '';
+      return `<label class="invite-row${disabled ? ' disabled' : ''}">
+        <input type="checkbox" class="invite-check" value="${esc(
+          friend.puuid || '',
+        )}" ${disabled ? 'disabled' : ''}>
+        <span class="friend-avatar">${esc(firstChar(friend.name))}</span>
+        <span class="invite-info">
+          <span class="invite-name">${esc(friend.name)}</span>
+          <span class="invite-status ${status.className}">${esc(
+            status.label,
+          )}</span>
+        </span>
+        ${mark ? `<span class="invite-mark">${esc(mark)}</span>` : ''}
+      </label>`;
+    })
+    .join('');
+  $('inviteSend').disabled = true;
+}
+
+async function openInviteModal() {
+  const s = state.status;
+  if (!s?.inLobby || !s.lobby) {
+    showToast('先创建或加入一个房间喵', 'error');
+    return;
+  }
+  $('inviteModal').classList.remove('hidden');
+  document.body.classList.add('modal-open');
+  $('inviteList').innerHTML =
+    '<div class="empty">正在读取好友列表...</div>';
+  $('inviteSend').disabled = true;
+  await loadFriends();
+  renderInviteList();
+}
+
+async function sendInvites() {
+  const selected = [
+    ...$('inviteList').querySelectorAll('.invite-check:checked'),
+  ]
+    .map((element) => element.value)
+    .filter(Boolean);
+  if (!selected.length) {
+    showToast('先选择要邀请的好友喵', 'error');
+    return;
+  }
+
+  const button = $('inviteSend');
+  button.disabled = true;
+  button.textContent = '发送中...';
+  try {
+    const result = await postJson('/api/invite', { puuids: selected });
+    if (result.ok) {
+      selected.forEach((puuid) => state.invitedPuuids.add(puuid));
+      showToast(result.data?.message || `已发送 ${selected.length} 个邀请喵`);
+      renderInviteList();
+      refreshStatus();
+    } else {
+      showToast(result.data?.message || '邀请失败喵', 'error');
+      renderInviteList();
+    }
+  } catch (error) {
+    showToast(`邀请失败: ${error.message}`, 'error');
+  } finally {
+    button.textContent = '发送邀请';
+    const any = $('inviteList').querySelectorAll('.invite-check:checked').length;
+    button.disabled = !any;
+  }
 }
 
 async function loadFriends() {
@@ -1176,6 +1344,18 @@ function bindEvents() {
   });
 
   $('refreshFriends').addEventListener('click', loadFriends);
+  $('inviteFriendsBtn').addEventListener('click', openInviteModal);
+  $('inviteSend').addEventListener('click', sendInvites);
+  $('inviteList').addEventListener('change', () => {
+    const any = $('inviteList').querySelectorAll('.invite-check:checked').length;
+    $('inviteSend').disabled = any === 0;
+  });
+  document.querySelectorAll('[data-close-invite]').forEach((element) => {
+    element.addEventListener('click', closeInviteModal);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeInviteModal();
+  });
   if ($('createLobbyBtn')) {
     $('createLobbyBtn').addEventListener('click', createLobby);
   }

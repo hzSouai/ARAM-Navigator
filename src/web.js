@@ -427,6 +427,13 @@ async function handleRequest(req, res, runtime, log) {
     return;
   }
 
+  if (pathname === '/api/invite' && req.method === 'POST') {
+    const body = await readJson(req);
+    const result = await runtime.inviteFriends(body.puuids);
+    sendJson(res, result.ok ? 200 : 409, result);
+    return;
+  }
+
   if (pathname === '/api/leave-lobby' && req.method === 'POST') {
     const result = await runtime.leaveLobby();
     sendJson(res, result.ok ? 200 : 409, result);
