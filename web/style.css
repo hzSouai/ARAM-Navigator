@@ -297,12 +297,15 @@ body {
   display: grid;
   flex: 1;
   grid-template-columns: minmax(0, 2.15fr) minmax(300px, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: 16px;
   align-items: stretch;
+  min-height: 0;
 }
 
 .selection-card {
   display: flex;
+  min-height: 0;
   flex-direction: column;
   padding: 22px 24px 20px;
   background:
@@ -611,6 +614,7 @@ body {
   flex-direction: column;
   gap: 16px;
   min-width: 0;
+  min-height: 0;
 }
 
 .live-tag {
