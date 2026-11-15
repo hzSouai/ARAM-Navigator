@@ -34,6 +34,7 @@
   "autoSelectCandidate": true,
   "autoPickClientCard": true,
   "autoSpellPreset": true,
+  "confirmWishlistSwap": true,
   "benchBurstMode": true,
   "acceptDelayMs": 1500,
   "playAgainDelayMs": 3000,

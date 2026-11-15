@@ -1807,6 +1807,82 @@ body.modal-open {
   z-index: 110;
 }
 
+.swap-prompt-modal {
+  z-index: 115;
+}
+
+.swap-prompt-card {
+  width: min(480px, 100%);
+}
+
+.swap-prompt-text {
+  margin: 0 0 16px;
+  color: var(--text);
+  font-size: 13.5px;
+  line-height: 1.7;
+}
+
+.swap-prompt-compare {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.swap-prompt-side {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.swap-prompt-label {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.swap-prompt-champion {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.swap-prompt-champion .champ-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+}
+
+.swap-prompt-name {
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.swap-prompt-rank {
+  flex: none;
+  color: var(--gold);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.swap-prompt-arrow {
+  flex: none;
+  color: var(--gold);
+  font-size: 18px;
+}
+
+.swap-prompt-actions {
+  margin-top: 16px;
+}
+
 .invite-card {
   width: min(520px, 100%);
 }

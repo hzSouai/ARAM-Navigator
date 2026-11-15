@@ -33,6 +33,7 @@ const state = {
   lastPartyId: '',
   spellCatalog: [],
   spellPick: { combo: 'ghost' },
+  swapPromptBusy: false,
 };
 
 const SPELL_COMBOS = {
@@ -527,6 +528,7 @@ function renderStatus(s) {
     : '不在房间';
   $('leaveLobbyBtn').classList.toggle('hidden', !s.inLobby);
   renderRoom(s);
+  renderSwapPrompt(s);
 
   const createLobbyBtn = $('createLobbyBtn');
   const findMatchBtn = $('findMatchBtn');
@@ -950,6 +952,78 @@ function renderRoom(s) {
     }</div>`;
 }
 
+function swapPromptChampionHtml(champion, rank) {
+  return `${champIcon(champion.id, champion.name)}
+    <span class="swap-prompt-name">${esc(champion.name)}</span>
+    <span class="swap-prompt-rank">#${rank + 1}</span>`;
+}
+
+function renderSwapPrompt(s) {
+  const prompt = s.swapPrompt;
+  const modal = $('swapPromptModal');
+  if (!prompt) {
+    if (!modal.classList.contains('hidden')) {
+      modal.classList.add('hidden');
+      document.body.classList.remove('modal-open');
+    }
+    return;
+  }
+
+  $('swapPromptText').textContent = `手上的 ${prompt.held.name} 和备选席的 ${prompt.target.name} 都是心愿英雄，要换到 ${prompt.target.name} 吗？`;
+  $('swapPromptHeld').innerHTML = swapPromptChampionHtml(
+    prompt.held,
+    prompt.heldRank,
+  );
+  $('swapPromptTarget').innerHTML = swapPromptChampionHtml(
+    prompt.target,
+    prompt.targetRank,
+  );
+  $('swapPromptAccept').textContent = `换到 ${prompt.target.name}`;
+  $('swapPromptKeep').textContent = `保持 ${prompt.held.name}`;
+  const timeLeft = Number.isFinite(s.timeLeft) ? s.timeLeft : prompt.timeLeft;
+  $('swapPromptTimer').textContent =
+    Number.isFinite(timeLeft) && timeLeft > 0
+      ? `剩余约 ${Math.max(0, Math.ceil(timeLeft / 1000))} 秒`
+      : '';
+  $('swapPromptAccept').disabled = state.swapPromptBusy;
+  $('swapPromptKeep').disabled = state.swapPromptBusy;
+  modal.classList.remove('hidden');
+  document.body.classList.add('modal-open');
+}
+
+async function decideSwapPrompt(accept) {
+  if (state.swapPromptBusy) return;
+  const prompt = state.status?.swapPrompt;
+  if (!prompt) return;
+
+  state.swapPromptBusy = true;
+  $('swapPromptAccept').disabled = true;
+  $('swapPromptKeep').disabled = true;
+  try {
+    const result = await postJson(
+      accept ? '/api/swap-prompt/confirm' : '/api/swap-prompt/dismiss',
+      {},
+    );
+    if (result.ok) {
+      showToast(
+        result.data?.message ||
+          (accept ? '已确认换人喵' : '已保持当前英雄喵'),
+      );
+      $('swapPromptModal').classList.add('hidden');
+      document.body.classList.remove('modal-open');
+      refreshStatus();
+    } else {
+      showToast(result.data?.message || '操作失败喵', 'error');
+    }
+  } catch (error) {
+    showToast(`操作失败: ${error.message}`, 'error');
+  } finally {
+    state.swapPromptBusy = false;
+    $('swapPromptAccept').disabled = false;
+    $('swapPromptKeep').disabled = false;
+  }
+}
+
 function closeInviteModal() {
   $('inviteModal').classList.add('hidden');
   document.body.classList.remove('modal-open');
@@ -1210,6 +1284,7 @@ function loadSettings(config) {
   $('autoSelectCandidate').checked = config.autoSelectCandidate !== false;
   $('autoPickClientCard').checked = config.autoPickClientCard !== false;
   $('autoSpellPreset').checked = config.autoSpellPreset !== false;
+  $('confirmWishlistSwap').checked = config.confirmWishlistSwap !== false;
   $('benchBurstMode').checked = config.benchBurstMode !== false;
   $('dryRun').checked = Boolean(config.dryRun);
 }
@@ -1247,6 +1322,7 @@ async function saveSettings() {
     autoSelectCandidate: $('autoSelectCandidate').checked,
     autoPickClientCard: $('autoPickClientCard').checked,
     autoSpellPreset: $('autoSpellPreset').checked,
+    confirmWishlistSwap: $('confirmWishlistSwap').checked,
     benchBurstMode: $('benchBurstMode').checked,
     dryRun: $('dryRun').checked,
   };
@@ -1500,6 +1576,8 @@ function bindEvents() {
   $('inviteSend').addEventListener('click', sendInvites);
   $('changeSpellsBtn').addEventListener('click', openSpellModal);
   $('spellSave').addEventListener('click', saveSpells);
+  $('swapPromptAccept').addEventListener('click', () => decideSwapPrompt(true));
+  $('swapPromptKeep').addEventListener('click', () => decideSwapPrompt(false));
   $('spellModal').addEventListener('click', (event) => {
     const combo = event.target.closest('[data-spell-combo]');
     if (!combo) return;

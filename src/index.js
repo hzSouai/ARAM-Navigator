@@ -108,6 +108,7 @@ const DEFAULTS = {
   autoSelectCandidate: true,
   autoPickClientCard: true,
   autoSpellPreset: true,
+  confirmWishlistSwap: true,
   benchBurstMode: true,
   acceptDelayMs: 1500,
   playAgainDelayMs: 3000,
@@ -188,6 +189,9 @@ const runtime = {
   lastGameflowAt: 0,
   hextechQueueId: 2400,
   pendingManualSwap: null,
+  swapPrompt: null,
+  swapDeclined: new Set(),
+  manualChoiceGameId: null,
   timerAnchor: null,
   inLobby: false,
   lobby: null,
@@ -415,6 +419,7 @@ function normalizeConfig(parsed) {
   config.autoSelectCandidate = Boolean(config.autoSelectCandidate);
   config.autoPickClientCard = Boolean(config.autoPickClientCard);
   config.autoSpellPreset = Boolean(config.autoSpellPreset);
+  config.confirmWishlistSwap = Boolean(config.confirmWishlistSwap);
   config.benchBurstMode = Boolean(config.benchBurstMode);
   config.acceptDelayMs = clampNumber(
     config.acceptDelayMs,
@@ -726,6 +731,18 @@ function buildStatus() {
           gameId: runtime.pendingManualSwap.gameId,
         }
       : null,
+    swapPrompt: runtime.swapPrompt
+      ? {
+          key: runtime.swapPrompt.key,
+          gameId: runtime.swapPrompt.gameId,
+          held: champRef(runtime.swapPrompt.held),
+          target: champRef(runtime.swapPrompt.target),
+          heldRank: runtime.swapPrompt.heldRank,
+          targetRank: runtime.swapPrompt.targetRank,
+          timeLeft: runtime.swapPrompt.timeLeft,
+          at: runtime.swapPrompt.at,
+        }
+      : null,
     gameId: session?.gameId ?? null,
     timeLeft: displayedTimeLeft(session, info),
     isInfinite: info?.isInfinite ?? false,
@@ -749,6 +766,7 @@ function buildStatus() {
     autoSelectCandidate: Boolean(config.autoSelectCandidate),
     autoPickClientCard: Boolean(config.autoPickClientCard),
     autoSpellPreset: Boolean(config.autoSpellPreset),
+    confirmWishlistSwap: Boolean(config.confirmWishlistSwap),
     benchBurstMode: Boolean(config.benchBurstMode),
     config: {
       startupDelayMs: config.startupDelayMs,
@@ -763,6 +781,7 @@ function buildStatus() {
       autoSelectCandidate: config.autoSelectCandidate,
       autoPickClientCard: config.autoPickClientCard,
       autoSpellPreset: config.autoSpellPreset,
+      confirmWishlistSwap: config.confirmWishlistSwap,
       benchBurstMode: config.benchBurstMode,
       acceptDelayMs: config.acceptDelayMs,
       playAgainDelayMs: config.playAgainDelayMs,
@@ -1707,6 +1726,109 @@ async function acceptTrade(tradeId) {
   }
 }
 
+function maybeSwapPrompt(session, info, runtime2) {
+  const config = runtime2.config;
+  if (
+    !config.confirmWishlistSwap ||
+    !config.autoSelectCandidate ||
+    runtime2.paused
+  ) {
+    runtime2.swapPrompt = null;
+    return false;
+  }
+
+  const wishlist = config.wishlist || [];
+  const heldRank = wishlist.indexOf(Number(info.held));
+  if (heldRank < 0) {
+    runtime2.swapPrompt = null;
+    return false;
+  }
+
+  let target = null;
+  let targetRank = Number.POSITIVE_INFINITY;
+  for (const championId of info.bench) {
+    const rank = wishlist.indexOf(Number(championId));
+    if (rank < 0 || rank >= heldRank) continue;
+    if (rank < targetRank) {
+      target = Number(championId);
+      targetRank = rank;
+    }
+  }
+  if (!target || target === info.held) {
+    runtime2.swapPrompt = null;
+    return false;
+  }
+
+  const key = `${session.gameId}|${info.held}|${target}`;
+  if (runtime2.swapDeclined.has(key)) {
+    runtime2.swapPrompt = null;
+    return true;
+  }
+  if (runtime2.pendingManualSwap) {
+    runtime2.swapPrompt = null;
+    return false;
+  }
+
+  if (!runtime2.swapPrompt || runtime2.swapPrompt.key !== key) {
+    runtime2.swapPrompt = {
+      key,
+      gameId: session.gameId,
+      held: Number(info.held),
+      target: Number(target),
+      heldRank,
+      targetRank,
+      timeLeft: info.timeLeft,
+      at: Date.now(),
+    };
+    log(
+      `[PROMPT] 手上 ${nameOf(info.held)} 和备选席 ${nameOf(
+        target,
+      )} 都是心愿英雄，等待确认是否更换`,
+    );
+    publishStatus(true);
+  } else {
+    runtime2.swapPrompt.timeLeft = info.timeLeft;
+  }
+  return true;
+}
+
+async function acceptSwapPrompt() {
+  const prompt = runtime.swapPrompt;
+  if (!prompt) {
+    return { ok: false, message: '当前没有待确认的换人提示喵' };
+  }
+  runtime.swapPrompt = null;
+  runtime.manualChoiceGameId = prompt.gameId;
+  const result = await manualSwap(prompt.target);
+  publishStatus(true);
+  return result.ok
+    ? {
+        ok: true,
+        message: result.message || `已确认换到 ${nameOf(prompt.target)}喵`,
+      }
+    : result;
+}
+
+function dismissSwapPrompt() {
+  const prompt = runtime.swapPrompt;
+  if (!prompt) {
+    return { ok: false, message: '当前没有待确认的换人提示喵' };
+  }
+  runtime.swapDeclined.add(prompt.key);
+  runtime.swapPrompt = null;
+  log(`[PROMPT] 用户选择保持 ${nameOf(prompt.held)}`);
+  runtime.lastAction = {
+    type: 'prompt',
+    target: champRef(prompt.held),
+    manual: true,
+    ok: true,
+    at: Date.now(),
+    message: `已选择保持 ${nameOf(prompt.held)}`,
+  };
+  publishStatus(true);
+  return { ok: true, message: `已保持 ${nameOf(prompt.held)}喵` };
+}
+
 async function manualSwap(championId) {
   const id = Number(championId);
   if (!runtime.client) return { ok: false, message: '还没有连接客户端' };
@@ -1715,6 +1837,9 @@ async function manualSwap(championId) {
   const hextechQueueId = runtime.hextechQueueId || DEFAULT_HEXTECH_QUEUE_ID;
   if (!info.bench.includes(id)) return { ok: false, message: '这个英雄不在备选席' };
   if (info.held === id) return { ok: false, message: '已经在这个英雄上' };
+
+  runtime.manualChoiceGameId = runtime.lastSession.gameId;
+  runtime.swapPrompt = null;
 
   if (runtime.lastSession.queueId === hextechQueueId) {
     const state = runtime.state;
@@ -2014,6 +2139,9 @@ async function handleSession(client, session, runtime2, state) {
     runtime2.clientCards = [];
     runtime2.clientCardsAt = 0;
     runtime2.pendingManualSwap = null;
+    runtime2.swapPrompt = null;
+    runtime2.swapDeclined.clear();
+    runtime2.manualChoiceGameId = null;
     log(
       `进入选人: gameId=${session.gameId ?? '?'} queue=${session.queueId ?? '?'} phase=${info.phase}`,
     );
@@ -2102,6 +2230,17 @@ async function handleSession(client, session, runtime2, state) {
   }
 
   if (await handlePendingSwap(client, session, info, runtime2, state)) {
+    return;
+  }
+
+  if (
+    runtime2.manualChoiceGameId &&
+    Number(runtime2.manualChoiceGameId) === Number(session.gameId)
+  ) {
+    return;
+  }
+
+  if (maybeSwapPrompt(session, info, runtime2)) {
     return;
   }
 
@@ -2205,6 +2344,9 @@ async function runLoop(initialClient, runtime2) {
       if (!session) {
         runtime2.lastSession = null;
         runtime2.pendingManualSwap = null;
+        runtime2.swapPrompt = null;
+        runtime2.swapDeclined.clear();
+        runtime2.manualChoiceGameId = null;
         resetState(state);
         publishStatus();
         if (Date.now() - lastIdleLogAt > 30000) {
@@ -2316,6 +2458,8 @@ async function main() {
   runtime.joinFriendLobby = joinFriendLobby;
   runtime.inviteFriends = inviteFriends;
   runtime.changeSummonerSpells = changeSummonerSpells;
+  runtime.acceptSwapPrompt = acceptSwapPrompt;
+  runtime.dismissSwapPrompt = dismissSwapPrompt;
   runtime.createHextechLobby = createHextechLobby;
   runtime.findMatch = findMatch;
 

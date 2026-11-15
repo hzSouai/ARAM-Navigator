@@ -513,6 +513,18 @@ async function handleRequest(req, res, runtime, log) {
     return;
   }
 
+  if (pathname === '/api/swap-prompt/confirm' && req.method === 'POST') {
+    const result = await runtime.acceptSwapPrompt();
+    sendJson(res, result.ok ? 200 : 409, result);
+    return;
+  }
+
+  if (pathname === '/api/swap-prompt/dismiss' && req.method === 'POST') {
+    const result = runtime.dismissSwapPrompt();
+    sendJson(res, result.ok ? 200 : 409, result);
+    return;
+  }
+
   if (pathname === '/api/leave-lobby' && req.method === 'POST') {
     const result = await runtime.leaveLobby();
     sendJson(res, result.ok ? 200 : 409, result);

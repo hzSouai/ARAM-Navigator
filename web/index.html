@@ -296,6 +296,10 @@
                   <input id="autoSpellPreset" type="checkbox" class="switch" />
                 </label>
                 <label class="switch-row">
+                  <span>手上和备选席都是心愿英雄时先确认</span>
+                  <input id="confirmWishlistSwap" type="checkbox" class="switch" />
+                </label>
+                <label class="switch-row">
                   <span>海克斯爆发抢英雄（-1s 预发）</span>
                   <input id="benchBurstMode" type="checkbox" class="switch" />
                 </label>
@@ -393,6 +397,40 @@
           <div class="modal-actions spell-actions">
             <button id="spellSave" type="button" class="btn" disabled>保存</button>
             <button type="button" class="btn ghost" data-close-spell>取消</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div
+      id="swapPromptModal"
+      class="modal swap-prompt-modal hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="swapPromptTitle"
+    >
+      <div class="modal-backdrop"></div>
+      <div class="modal-card swap-prompt-card">
+        <div class="modal-head">
+          <h2 id="swapPromptTitle">心愿英雄冲突</h2>
+          <span id="swapPromptTimer" class="muted"></span>
+        </div>
+        <div class="modal-body">
+          <p id="swapPromptText" class="swap-prompt-text"></p>
+          <div class="swap-prompt-compare">
+            <div class="swap-prompt-side">
+              <span class="swap-prompt-label">当前</span>
+              <div id="swapPromptHeld" class="swap-prompt-champion"></div>
+            </div>
+            <span class="swap-prompt-arrow">→</span>
+            <div class="swap-prompt-side">
+              <span class="swap-prompt-label">备选席</span>
+              <div id="swapPromptTarget" class="swap-prompt-champion"></div>
+            </div>
+          </div>
+          <div class="confirm-actions swap-prompt-actions">
+            <button id="swapPromptKeep" type="button" class="btn ghost">保持</button>
+            <button id="swapPromptAccept" type="button" class="btn">换到</button>
           </div>
         </div>
       </div>
