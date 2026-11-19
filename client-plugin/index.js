@@ -1,12 +1,18 @@
-/*! ARAM Navigator plugin 0.0.2 — read the three-card screen and click for the web console */
+/*! ARAM Navigator plugin 0.0.3 — read the three-card screen and click for the web console */
 (() => {
   if (window.__aramNavigatorProbe) return;
   window.__aramNavigatorProbe = true;
 
-  const VERSION = '0.0.2';
-  const ENDPOINT = 'http://127.0.0.1:8765/api/plugin/cards';
-  const COMMANDS_ENDPOINT = 'http://127.0.0.1:8765/api/plugin/commands';
-  const RESULT_ENDPOINT = 'http://127.0.0.1:8765/api/plugin/result';
+  const VERSION = '0.0.3';
+  // The helper port can be changed in config.json. Probe the common ports
+  // instead of assuming 8765 after a helper restart or port change.
+  const BASES = [8765, 8766, 8767, 8768, 8769, 8770].map(
+    (port) => `http://127.0.0.1:${port}`,
+  );
+  const CARDS_PATH = '/api/plugin/cards';
+  const COMMANDS_PATH = '/api/plugin/commands';
+  const RESULT_PATH = '/api/plugin/result';
+  let helperBase = BASES[0];
   const HEADING = '选择你的英雄';
   const PATTERNS = [
     /champion-icons\/(\d+)\.png/i,
@@ -137,37 +143,41 @@
     });
   }
 
-  function send(payload) {
-    const data = JSON.stringify(payload);
-    try {
-      fetch(ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: data,
-      }).catch(() => sendXhr(data));
-    } catch {
-      sendXhr(data);
+  async function requestHelper(path, options = {}) {
+    const bases = [helperBase, ...BASES.filter((base) => base !== helperBase)];
+    for (const base of bases) {
+      try {
+        const response = await fetch(base + path, options);
+        if (response.ok) {
+          helperBase = base;
+          return response;
+        }
+      } catch {
+        // Try the next local helper port.
+      }
     }
+    return null;
   }
 
-  function sendXhr(data) {
+  async function send(payload) {
     try {
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', ENDPOINT);
-      xhr.setRequestHeader('Content-Type', 'application/json');
-      xhr.send(data);
+      await requestHelper(CARDS_PATH, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
     } catch {
       // The probe is best-effort.
     }
   }
 
-  function postResult(result) {
+  async function postResult(result) {
     try {
-      fetch(RESULT_ENDPOINT, {
+      await requestHelper(RESULT_PATH, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(result),
-      }).catch(() => {});
+      });
     } catch {
       // The result report is best-effort.
     }
@@ -358,11 +368,11 @@
     if (polling) return;
     polling = true;
     try {
-      const response = await fetch(
-        `${COMMANDS_ENDPOINT}?v=${VERSION}&t=${Date.now()}`,
+      const response = await requestHelper(
+        `${COMMANDS_PATH}?v=${VERSION}&t=${Date.now()}`,
         { cache: 'no-store' },
       );
-      if (!response.ok) return;
+      if (!response) return;
       const data = await response.json();
       const commands = Array.isArray(data.commands) ? data.commands : [];
       for (const cmd of commands) {
